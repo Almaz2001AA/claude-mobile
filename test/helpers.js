@@ -23,4 +23,30 @@ function killTmuxServer(socket) {
   try { execFileSync('tmux', ['-L', socket, 'kill-server'], { stdio: 'ignore' }); } catch {}
 }
 
-module.exports = { tmpDir, waitFor, killTmuxServer };
+const { EventEmitter } = require('node:events');
+
+class FakeWs extends EventEmitter {
+  constructor() {
+    super();
+    this.readyState = 1;
+    this.sent = [];
+    this.closed = null;
+  }
+
+  send(data) {
+    this.sent.push(data);
+  }
+
+  close(code, reason) {
+    if (this.readyState !== 1) return;
+    this.readyState = 3;
+    this.closed = { code, reason };
+    this.emit('close');
+  }
+
+  json() {
+    return this.sent.map((d) => JSON.parse(d));
+  }
+}
+
+module.exports = { tmpDir, waitFor, killTmuxServer, FakeWs };
