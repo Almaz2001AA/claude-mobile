@@ -48,6 +48,7 @@ input, textarea { background: var(--panel); border: 1px solid #3a3835; border-ra
 .swipe-action { position: absolute; top: 0; right: 0; bottom: 0; width: 96px; border-radius: 0; }
 .session { position: relative; display: block; padding: 12px 14px; background: var(--panel); border-radius: var(--radius); transition: transform .2s; }
 .swipe.open .session { transform: translateX(-96px); }
+.swipe .session { border-radius: 0; } /* the wrapper clips the corners; rounded card corners would reveal the red button */
 .session-title { font-weight: 600; }
 .session-cwd, .session-meta { color: var(--muted); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session.working .dot { color: var(--ok); }
