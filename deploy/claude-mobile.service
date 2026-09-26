@@ -1,0 +1,14 @@
+[Unit]
+Description=Claude Mobile (PWA for Claude Code tmux sessions)
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/node /home/user/claude-mobile/bin/claude-mobile.js serve
+Environment=PATH=%h/.local/bin:/usr/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=-%h/.config/claude-mobile/env
+Restart=on-failure
+# Only stop node itself: tmux servers forked from here must survive restarts.
+KillMode=process
+
+[Install]
+WantedBy=default.target
