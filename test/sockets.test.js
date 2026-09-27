@@ -42,7 +42,7 @@ test('terminal: closing the socket detaches without killing the session', async 
 
 function chatSetup() {
   const dir = tmpDir();
-  const status = new StatusStore({ file: path.join(dir, 'links.json') });
+  const status = new StatusStore({ file: path.join(dir, 'links.json'), projectsRoot: dir });
   const viewers = new Viewers();
   const transcript = path.join(dir, 's1.jsonl');
   fs.writeFileSync(transcript, USER + '\n');
@@ -91,6 +91,38 @@ test('chat: without a transcript says unavailable, then loads it once SessionSta
   const reloaded = ws.json().filter((m) => m.type === 'history')[1];
   assert.equal(reloaded.available, true);
   assert.deepEqual(reloaded.items.map((i) => i.text), ['привет']);
+  ws.close(1000);
+});
+
+test('chat: overlapping load() calls never leave two TranscriptTails running', async () => {
+  const { dir, status, viewers } = chatSetup();
+  const p1 = path.join(dir, 'p1.jsonl');
+  const p2 = path.join(dir, 'p2.jsonl');
+  fs.writeFileSync(p1, USER + '\n');
+  fs.writeFileSync(p2, USER + '\n');
+  const ws = new FakeWs();
+  attachChat(ws, { name: 'race', status, viewers, tailIntervalMs: 20 });
+
+  // Fire three status changes back-to-back, synchronously, so their load() calls all start
+  // before any of their readHistory() reads resolve: p1 -> p2 -> p1. Without a generation
+  // guard, both loads that target p1 (the first and the last) can independently decide they
+  // "won" and each spin up its own TranscriptTail for the same file.
+  status.applyHook('claude-race', { hook_event_name: 'SessionStart', transcript_path: p1 });
+  status.applyHook('claude-race', { hook_event_name: 'SessionStart', transcript_path: p2 });
+  status.applyHook('claude-race', { hook_event_name: 'SessionStart', transcript_path: p1 });
+
+  await waitFor(() => ws.json().filter((m) => m.type === 'history' && m.available).length >= 1);
+  // Give any stray, superseded load() calls a chance to finish and (if buggy) send their
+  // own extra 'history' / spin up their own tail.
+  await new Promise((r) => setTimeout(r, 150));
+  const historyMsgs = ws.json().filter((m) => m.type === 'history' && m.available);
+  assert.equal(historyMsgs.length, 1, 'only the winning load() sends a history message');
+
+  const before = ws.json().filter((m) => m.type === 'items').length;
+  fs.appendFileSync(p1, TEXT + '\n');
+  await waitFor(() => ws.json().filter((m) => m.type === 'items').length > before);
+  await new Promise((r) => setTimeout(r, 150));
+  assert.equal(ws.json().filter((m) => m.type === 'items').length, before + 1, 'exactly one tail is watching p1, not two');
   ws.close(1000);
 });
 

@@ -4,21 +4,26 @@ function attachChat(ws, { name, status, viewers, historyLimit = 200, tailInterva
   let tail = null;
   let currentPath;
   let closed = false;
+  // Bumped on every load() call so a slower, superseded call can tell it lost the race
+  // even when it happens to target the same transcriptPath as the call that replaced it
+  // (a plain "did the path change" check misses that case and leaks a second TranscriptTail).
+  let generation = 0;
   const send = (msg) => {
     if (!closed && ws.readyState === 1) ws.send(JSON.stringify(msg));
   };
 
   async function load() {
-    currentPath = status.get(name).transcriptPath || null;
+    const gen = ++generation;
     if (tail) tail.stop();
     tail = null;
-    if (!currentPath) {
+    currentPath = status.get(name).transcriptPath || null;
+    const path = currentPath;
+    if (!path) {
       send({ type: 'history', available: false, items: [], start: 0, offset: 0 });
       return;
     }
-    const path = currentPath;
     const history = await readHistory(path, { limit: historyLimit });
-    if (closed || path !== currentPath) return;
+    if (closed || gen !== generation) return;
     send({ type: 'history', available: true, ...history });
     tail = new TranscriptTail(path, { offset: history.offset, intervalMs: tailIntervalMs });
     tail.on('items', (items) => send({ type: 'items', items }));
