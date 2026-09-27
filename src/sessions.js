@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { UserError } = require('./errors');
+const { hasConversation } = require('./conversations');
 
 const PREFIX = 'claude-';
 const NAME_RE = /^[a-z0-9-]{1,32}$/;
@@ -15,9 +16,10 @@ function validateName(name) {
 
 // The only place in the app that runs tmux. Arguments are passed as an array, never through a shell.
 class SessionManager {
-  constructor({ socket = null, claudeCmd = 'claude' } = {}) {
+  constructor({ socket = null, claudeCmd = 'claude', projectsRoot } = {}) {
     this.socket = socket;
     this.claudeCmd = claudeCmd;
+    this.projectsRoot = projectsRoot;
   }
 
   baseArgs() {
@@ -83,7 +85,10 @@ class SessionManager {
     try { stat = fs.statSync(cwd); } catch {}
     if (!stat || !stat.isDirectory()) throw new UserError('Папка не найдена');
     if (await this.exists(name)) throw new UserError('Сессия с таким именем уже есть', 409);
-    const cmd = resume ? `${this.claudeCmd} --continue` : this.claudeCmd;
+    // `claude --continue` exits immediately with "No conversation found to continue" when the
+    // folder has none on file yet, killing the session on the spot: only pass it when one exists.
+    const doResume = resume && hasConversation(cwd, this.projectsRoot);
+    const cmd = doResume ? `${this.claudeCmd} --continue` : this.claudeCmd;
     await this.tmux(['new-session', '-d', '-s', `${PREFIX}${name}`, '-c', cwd, cmd]);
   }
 

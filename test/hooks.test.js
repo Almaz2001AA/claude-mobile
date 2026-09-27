@@ -5,6 +5,7 @@ const path = require('node:path');
 const http = require('node:http');
 const { execFileSync, spawnSync } = require('node:child_process');
 const { mergeHooks, installHooks, HOOK_EVENTS } = require('../src/install-hooks');
+const { readEnvFile, requestOptions } = require('../hooks/notify');
 const { tmpDir, waitFor, killTmuxServer } = require('./helpers');
 
 const NOTIFY = path.resolve(__dirname, '..', 'hooks', 'notify.js');
@@ -102,5 +103,56 @@ test('notify.js inside a claude- tmux session posts the event with the session n
     session_id: 's1',
     transcript_path: '/t/s1.jsonl',
   });
+  server.close();
+});
+
+test('readEnvFile parses simple KEY=VALUE lines and ignores comments/blank lines/missing files', () => {
+  const file = path.join(tmpDir(), 'env');
+  fs.writeFileSync(file, '# comment\n\nCLAUDE_MOBILE_ORIGIN=https://x\nCLAUDE_MOBILE_LISTEN=unix:/tmp/x.sock\n');
+  assert.deepEqual(readEnvFile(file), { CLAUDE_MOBILE_ORIGIN: 'https://x', CLAUDE_MOBILE_LISTEN: 'unix:/tmp/x.sock' });
+  assert.deepEqual(readEnvFile(path.join(tmpDir(), 'missing')), {});
+});
+
+test('requestOptions prefers a unix socket (env, then the env file) over TCP', () => {
+  assert.deepEqual(requestOptions({}, {}), { path: '/internal/hook', method: 'POST', timeout: 2000, host: '127.0.0.1', port: 8787 });
+  assert.deepEqual(requestOptions({ CLAUDE_MOBILE_PORT: '9000' }, {}), { path: '/internal/hook', method: 'POST', timeout: 2000, host: '127.0.0.1', port: 9000 });
+  assert.deepEqual(
+    requestOptions({}, { CLAUDE_MOBILE_LISTEN: 'unix:/tmp/x.sock' }),
+    { path: '/internal/hook', method: 'POST', timeout: 2000, socketPath: '/tmp/x.sock' },
+  );
+  assert.deepEqual(
+    requestOptions({ CLAUDE_MOBILE_LISTEN: 'unix:/env/wins.sock' }, { CLAUDE_MOBILE_LISTEN: 'unix:/file/loses.sock' }),
+    { path: '/internal/hook', method: 'POST', timeout: 2000, socketPath: '/env/wins.sock' },
+    'process env takes precedence over the env file',
+  );
+});
+
+test('notify.js posts over a unix socket when ~/.config/claude-mobile/env sets CLAUDE_MOBILE_LISTEN=unix:...', async () => {
+  const home = tmpDir();
+  fs.writeFileSync(path.join(home, 'hook-secret'), 's'.repeat(64));
+  const sockPath = path.join(home, 'http.sock');
+  fs.writeFileSync(path.join(home, 'env'), `CLAUDE_MOBILE_LISTEN=unix:${sockPath}\n`);
+
+  const received = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      received.push({ url: req.url, secret: req.headers['x-hook-secret'], body: JSON.parse(body) });
+      res.end('{}');
+    });
+  });
+  await new Promise((resolve) => server.listen(sockPath, resolve));
+
+  const fixture = path.join(home, 'event.json');
+  fs.writeFileSync(fixture, JSON.stringify({ hook_event_name: 'Stop' }));
+  execFileSync('tmux', [
+    '-L', socket, 'new-session', '-d', '-s', 'claude-unixhook',
+    '-e', `CLAUDE_MOBILE_HOME=${home}`,
+    `${process.execPath} ${NOTIFY} < ${fixture}; sleep 5`,
+  ]);
+  await waitFor(() => received.length === 1, { timeoutMs: 5000 });
+  assert.equal(received[0].secret, 's'.repeat(64));
+  assert.equal(received[0].body.tmuxSession, 'claude-unixhook');
   server.close();
 });

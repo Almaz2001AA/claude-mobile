@@ -169,7 +169,10 @@ function createApp(deps) {
   });
 
   on('POST', /^\/internal\/hook$/, async (req, res) => {
-    const direct = LOOPBACK.has(req.socket.remoteAddress) && !req.headers['x-forwarded-for'];
+    // A unix-domain-socket peer has no remoteAddress at all (it's undefined, not an IP): that's
+    // just as "direct" as loopback TCP, since only local processes can connect to the socket
+    // file at all (see CLAUDE_MOBILE_LISTEN=unix:...).
+    const direct = (req.socket.remoteAddress === undefined || LOOPBACK.has(req.socket.remoteAddress)) && !req.headers['x-forwarded-for'];
     if (!direct || !safeEqual(req.headers['x-hook-secret'] || '', hookSecret)) return sendJson(res, 403, { error: 'forbidden' });
     const { tmuxSession, event } = await readJsonBody(req);
     if (typeof tmuxSession === 'string' && event && typeof event === 'object') status.applyHook(tmuxSession, event);

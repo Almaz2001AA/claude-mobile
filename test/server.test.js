@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const http = require('node:http');
 const WebSocket = require('ws');
 const { createApp } = require('../src/server');
 const { SessionManager } = require('../src/sessions');
@@ -13,6 +14,7 @@ const { Viewers } = require('../src/viewers');
 const { Recent } = require('../src/recent');
 const { QuickCommands } = require('../src/quick');
 const { Favorites } = require('../src/favorites');
+const { encodeCwd } = require('../src/conversations');
 const { tmpDir, waitFor, killTmuxServer } = require('./helpers');
 
 const socket = `cm-test-${process.pid}-server`;
@@ -37,7 +39,7 @@ test.before(async () => {
     sessions,
     input: new InputSender({ sessions, enterDelayMs: 20 }),
     status,
-    auth: new Auth({ pinHash: hashPin('1234'), secret: 'c'.repeat(64) }),
+    auth: new Auth({ pinHash: hashPin('123456'), secret: 'c'.repeat(64) }),
     push: new PushService({ vapidFile: path.join(dir, 'vapid.json'), subsFile: path.join(dir, 'subs.json'), sender }),
     viewers: new Viewers(),
     recent: new Recent(path.join(dir, 'recent.json')),
@@ -74,7 +76,7 @@ test('API requires login; wrong PIN is 401; right PIN sets a secure cookie', asy
   assert.equal((await fetch(`${base}/api/nope`)).status, 404);
   const bad = await fetch(`${base}/api/login`, { method: 'POST', body: JSON.stringify({ pin: '0000' }) });
   assert.equal(bad.status, 401);
-  const good = await fetch(`${base}/api/login`, { method: 'POST', body: JSON.stringify({ pin: '1234' }) });
+  const good = await fetch(`${base}/api/login`, { method: 'POST', body: JSON.stringify({ pin: '123456' }) });
   assert.equal(good.status, 200);
   const setCookie = good.headers.get('set-cookie');
   assert.match(setCookie, /^cm_auth=\d+\.[0-9a-f]+; HttpOnly; Secure; SameSite=Strict; Path=\/; Max-Age=2592000$/);
@@ -89,7 +91,7 @@ test('state-changing /api requests need a matching Origin when one is sent, but 
   const sameOrigin = await fetch(`${base}/api/login`, { method: 'POST', headers: { origin: base }, body: JSON.stringify({ pin: '0000' }) });
   assert.notEqual(sameOrigin.status, 403);
 
-  const foreign = await fetch(`${base}/api/login`, { method: 'POST', headers: { origin: 'https://evil.example' }, body: JSON.stringify({ pin: '1234' }) });
+  const foreign = await fetch(`${base}/api/login`, { method: 'POST', headers: { origin: 'https://evil.example' }, body: JSON.stringify({ pin: '123456' }) });
   assert.equal(foreign.status, 403);
 
   // A GET is not state-changing, so a foreign Origin doesn't matter there.
@@ -153,7 +155,7 @@ test('favorites: save, validation, open creates a resumed session, and open of a
     sessions: resumeSessions,
     input: new InputSender({ sessions: resumeSessions, enterDelayMs: 20 }),
     status,
-    auth: new Auth({ pinHash: hashPin('1234'), secret: 'c'.repeat(64) }),
+    auth: new Auth({ pinHash: hashPin('123456'), secret: 'c'.repeat(64) }),
     push: new PushService({ vapidFile: path.join(dir, 'vapid3.json'), subsFile: path.join(dir, 'subs3.json'), sender: { generateVAPIDKeys: () => ({ publicKey: 'PUB', privateKey: 'PRIV' }), setVapidDetails() {}, async sendNotification() {} } }),
     viewers: new Viewers(),
     recent: new Recent(path.join(dir, 'recent3.json')),
@@ -184,16 +186,18 @@ test('favorites: save, validation, open creates a resumed session, and open of a
   favApp.close();
 });
 
-test('POST /api/sessions with resume:true passes resume through to sessions.create', async () => {
+test('POST /api/sessions with resume:true passes resume through to sessions.create, but only continues when a previous conversation exists', async () => {
+  const projectsRoot = tmpDir();
   const resumeSessions = new SessionManager({
     socket,
     claudeCmd: "sh -c 'echo ARGS:\"$*\"; cat' x",
+    projectsRoot,
   });
   const resumeApp = createApp({
     sessions: resumeSessions,
     input: new InputSender({ sessions: resumeSessions, enterDelayMs: 20 }),
     status,
-    auth: new Auth({ pinHash: hashPin('1234'), secret: 'c'.repeat(64) }),
+    auth: new Auth({ pinHash: hashPin('123456'), secret: 'c'.repeat(64) }),
     push: new PushService({ vapidFile: path.join(dir, 'vapid2.json'), subsFile: path.join(dir, 'subs2.json'), sender: { generateVAPIDKeys: () => ({ publicKey: 'PUB', privateKey: 'PRIV' }), setVapidDetails() {}, async sendNotification() {} } }),
     viewers: new Viewers(),
     recent: new Recent(path.join(dir, 'recent2.json')),
@@ -211,6 +215,8 @@ test('POST /api/sessions with resume:true passes resume through to sessions.crea
   });
 
   const cwd = tmpDir();
+  fs.mkdirSync(path.join(projectsRoot, encodeCwd(cwd)), { recursive: true });
+  fs.writeFileSync(path.join(projectsRoot, encodeCwd(cwd), 'abc.jsonl'), '');
   assert.equal((await resumeCall('POST', '/api/sessions', { name: 'resumed', cwd, resume: true })).status, 201);
   await waitFor(async () => (await resumeSessions.capture('resumed')).includes('--continue'));
   assert.match(await resumeSessions.capture('resumed'), /ARGS:--continue/);
@@ -219,8 +225,16 @@ test('POST /api/sessions with resume:true passes resume through to sessions.crea
   await waitFor(async () => (await resumeSessions.capture('noresume')).includes('ARGS:'));
   assert.doesNotMatch(await resumeSessions.capture('noresume'), /--continue/);
 
+  // A folder with no previous conversation must NOT get --continue even with resume:true:
+  // that's exactly the "No conversation found to continue" crash this fixes.
+  const freshCwd = tmpDir();
+  assert.equal((await resumeCall('POST', '/api/sessions', { name: 'freshresume', cwd: freshCwd, resume: true })).status, 201);
+  await waitFor(async () => (await resumeSessions.capture('freshresume')).includes('ARGS:'));
+  assert.doesNotMatch(await resumeSessions.capture('freshresume'), /--continue/);
+
   await resumeSessions.kill('resumed');
   await resumeSessions.kill('noresume');
+  await resumeSessions.kill('freshresume');
   resumeApp.close();
 });
 
@@ -236,6 +250,33 @@ test('hook endpoint needs the secret and a direct loopback call, then drives sta
   const history = await (await call('GET', '/api/sessions/hooked/history?limit=10')).json();
   assert.deepEqual(history.items.map((i) => i.text), ['hi']);
   assert.equal((await call('GET', '/api/sessions/nohistory/history')).status, 404);
+});
+
+test('hook endpoint accepts a unix-domain-socket peer as "direct" (no remoteAddress at all, not an IP)', async () => {
+  const unixApp = createApp({
+    sessions: { exists: async () => true, baseArgs: () => [] },
+    status,
+    auth: new Auth({ pinHash: hashPin('123456'), secret: 'c'.repeat(64) }),
+    viewers: new Viewers(),
+    paths: { uploads: path.join(dir, 'uploads-unix') },
+    hookSecret: SECRET,
+    publicDir: path.join(dir, 'public'),
+  });
+  const sockPath = path.join(tmpDir(), 'hook.sock');
+  await new Promise((resolve) => unixApp.server.listen(sockPath, resolve));
+  const post = (headers, body) => new Promise((resolve, reject) => {
+    const req = http.request({ socketPath: sockPath, path: '/internal/hook', method: 'POST', headers: { 'content-type': 'application/json', ...headers } }, (res) => {
+      res.resume();
+      res.on('end', () => resolve(res.statusCode));
+    });
+    req.on('error', reject);
+    req.end(body);
+  });
+  const event = JSON.stringify({ tmuxSession: 'claude-x', event: { hook_event_name: 'Stop' } });
+  assert.equal(await post({}, event), 403, 'still needs the secret');
+  assert.equal(await post({ 'x-hook-secret': SECRET, 'x-forwarded-for': '1.2.3.4' }, event), 403, 'still rejects a forwarded call');
+  assert.equal(await post({ 'x-hook-secret': SECRET }, event), 200);
+  unixApp.close();
 });
 
 test('upload stores the raw body', async () => {

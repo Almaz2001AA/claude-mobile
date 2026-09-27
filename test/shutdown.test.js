@@ -9,7 +9,7 @@ const { Viewers } = require('../src/viewers');
 const { waitFor } = require('./helpers');
 
 const SECRET = 'c'.repeat(64);
-const auth = new Auth({ pinHash: hashPin('1234'), secret: SECRET });
+const auth = new Auth({ pinHash: hashPin('123456'), secret: SECRET });
 
 // Lightweight fakes: these tests are about the HTTP/WS plumbing (crash guards, shutdown,
 // heartbeat), not about tmux, so a real SessionManager/StatusStore would only add noise.

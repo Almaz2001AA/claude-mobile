@@ -1,7 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { SessionManager, validateName } = require('../src/sessions');
 const { UserError } = require('../src/errors');
+const { encodeCwd } = require('../src/conversations');
 const { tmpDir, waitFor, killTmuxServer } = require('./helpers');
 
 const socket = `cm-test-${process.pid}-sessions`;
@@ -69,15 +72,21 @@ test('list ignores claude- sessions whose remainder is not a valid name', async 
   await sessions.kill('mine2');
 });
 
-test('create with resume runs claudeCmd with --continue appended', async () => {
+test('create with resume runs claudeCmd with --continue appended, but only when a previous conversation exists for that cwd', async () => {
+  const projectsRoot = tmpDir();
+  const dir = tmpDir();
+  // Simulate Claude Code having a stored conversation for this folder.
+  fs.mkdirSync(path.join(projectsRoot, encodeCwd(dir)), { recursive: true });
+  fs.writeFileSync(path.join(projectsRoot, encodeCwd(dir), 'abc.jsonl'), '');
+
   const resumeSessions = new SessionManager({
     socket,
     // sh -c 'echo ARGS:"$*"; cat' x -- the trailing "x" becomes $0, so "$*" only picks up
     // whatever tmux appends after claudeCmd (i.e. --continue when resume is requested);
     // `cat` keeps the pane alive after the echo so capture-pane can see the output.
     claudeCmd: "sh -c 'echo ARGS:\"$*\"; cat' x",
+    projectsRoot,
   });
-  const dir = tmpDir();
   await resumeSessions.create('resumed', dir, { resume: true });
   await waitFor(async () => (await resumeSessions.capture('resumed')).includes('--continue'));
   assert.match(await resumeSessions.capture('resumed'), /ARGS:--continue/);
@@ -87,6 +96,20 @@ test('create with resume runs claudeCmd with --continue appended', async () => {
   await waitFor(async () => (await resumeSessions.capture('noresume')).includes('ARGS:'));
   assert.doesNotMatch(await resumeSessions.capture('noresume'), /--continue/);
   await resumeSessions.kill('noresume');
+});
+
+test('create with resume does NOT add --continue when no previous conversation exists for that cwd (avoids "No conversation found to continue" killing the session)', async () => {
+  const projectsRoot = tmpDir(); // empty: no conversation stored for any folder
+  const dir = tmpDir();
+  const resumeSessions = new SessionManager({
+    socket,
+    claudeCmd: "sh -c 'echo ARGS:\"$*\"; cat' x",
+    projectsRoot,
+  });
+  await resumeSessions.create('freshresume', dir, { resume: true });
+  await waitFor(async () => (await resumeSessions.capture('freshresume')).includes('ARGS:'));
+  assert.doesNotMatch(await resumeSessions.capture('freshresume'), /--continue/);
+  await resumeSessions.kill('freshresume');
 });
 
 test('tmux() does not crash when tmux exits without reading stdin', async () => {

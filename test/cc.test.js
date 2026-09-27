@@ -10,10 +10,12 @@ const socket = `cm-test-${process.pid}-cc`;
 
 let home;
 let fakeBinDir;
+let projectsRoot;
 
 test.before(() => {
   home = tmpDir();
   fakeBinDir = tmpDir();
+  projectsRoot = tmpDir();
   // A stand-in for the real `claude` binary: echoes its args (so the test can see whether
   // --continue was appended) then keeps the pane alive with `cat`, like the real CLI would.
   const fakeClaude = path.join(fakeBinDir, 'claude');
@@ -23,18 +25,31 @@ test.before(() => {
 
 test.after(() => killTmuxServer(socket));
 
+function baseEnv(envExtra = {}) {
+  return {
+    ...process.env,
+    PATH: `${fakeBinDir}:${process.env.PATH}`,
+    CLAUDE_MOBILE_HOME: home,
+    CLAUDE_PROJECTS_ROOT: projectsRoot,
+    CC_TMUX_SOCKET: socket,
+    ...envExtra,
+  };
+}
+
 function runCc(args, envExtra = {}) {
   return execFileSync(CC_BIN, args, {
     encoding: 'utf8',
-    env: {
-      ...process.env,
-      PATH: `${fakeBinDir}:${process.env.PATH}`,
-      CLAUDE_MOBILE_HOME: home,
-      CC_TMUX_SOCKET: socket,
-      CC_NO_ATTACH: '1',
-      ...envExtra,
-    },
+    env: baseEnv({ CC_NO_ATTACH: '1', ...envExtra }),
   });
+}
+
+// Mirrors src/conversations.js's encoding: makes `cwd` (exactly as bin/cc will use it as
+// $CWD) look like it has a stored Claude Code conversation, so has_conversation (and hence
+// --continue) reports true for it.
+function seedConversation(cwd) {
+  const dir = path.join(projectsRoot, cwd.replace(/[^A-Za-z0-9]/g, '-'));
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'abc.jsonl'), '');
 }
 
 function tmuxCapture(session) {
@@ -55,8 +70,9 @@ function writeFavorites(items) {
   fs.writeFileSync(path.join(home, 'favorites.json'), JSON.stringify(items));
 }
 
-test('cc <name> resolves a favorite folder and runs claude --continue by default', async () => {
+test('cc <name> resolves a favorite folder and runs claude --continue when a previous conversation exists', async () => {
   const cwd = tmpDir();
+  seedConversation(cwd);
   writeFavorites([{ name: 'proj', cwd }]);
   runCc(['proj']);
   assert.ok(tmuxHasSession('claude-proj'));
@@ -69,6 +85,7 @@ test('cc <name> resolves a favorite folder and runs claude --continue by default
 
 test('cc <path> uses the directory itself when it is not a favorite, naming the session from its basename', async () => {
   const cwd = tmpDir();
+  seedConversation(cwd);
   const base = path.basename(cwd).toLowerCase().replace(/[^a-z0-9-]+/g, '-').slice(0, 32);
   writeFavorites([]);
   runCc([cwd]);
@@ -76,6 +93,17 @@ test('cc <path> uses the directory itself when it is not a favorite, naming the 
   await waitFor(async () => tmuxCapture(`claude-${base}`).includes('FAKE'));
   assert.match(tmuxCapture(`claude-${base}`), /FAKE --continue/);
   execFileSync('tmux', ['-L', socket, 'kill-session', '-t', `=claude-${base}`]);
+});
+
+test('cc does not pass --continue when there is no previous conversation for the folder, even without -n (avoids "No conversation found to continue" killing the session)', async () => {
+  const cwd = tmpDir(); // fresh: nothing seeded in projectsRoot for it
+  writeFavorites([{ name: 'neverused', cwd }]);
+  runCc(['neverused']);
+  await waitFor(async () => tmuxCapture('claude-neverused').includes('FAKE'));
+  const pane = tmuxCapture('claude-neverused');
+  assert.match(pane, /FAKE\s*\n/);
+  assert.doesNotMatch(pane, /--continue/);
+  execFileSync('tmux', ['-L', socket, 'kill-session', '-t', '=claude-neverused']);
 });
 
 test('cc -n starts a fresh conversation without --continue', async () => {
@@ -134,13 +162,8 @@ test('cc actually execs tmux attach-session (not a shell function) when not alre
 
   execFileSync(CC_BIN, ['attachme'], {
     encoding: 'utf8',
-    env: {
-      ...process.env,
-      PATH: `${wrapperDir}:${fakeBinDir}:${process.env.PATH}`,
-      CLAUDE_MOBILE_HOME: home,
-      CC_TMUX_SOCKET: socket,
-      // Deliberately no CC_NO_ATTACH: this exercises the real (non-test-shortcut) attach path.
-    },
+    // Deliberately no CC_NO_ATTACH: this exercises the real (non-test-shortcut) attach path.
+    env: { ...baseEnv(), PATH: `${wrapperDir}:${fakeBinDir}:${process.env.PATH}` },
   });
   const logged = fs.readFileSync(log, 'utf8').trim().split('\n');
   const attachLine = logged.find((l) => l.includes('attach-session'));
@@ -170,7 +193,7 @@ test('cc warns to stderr when an existing session was started in a different fol
   writeFavorites([{ name: 'moved', cwd: cwd2 }]);
   const res = spawnSync(CC_BIN, ['moved'], {
     encoding: 'utf8',
-    env: { ...process.env, PATH: `${fakeBinDir}:${process.env.PATH}`, CLAUDE_MOBILE_HOME: home, CC_TMUX_SOCKET: socket, CC_NO_ATTACH: '1' },
+    env: baseEnv({ CC_NO_ATTACH: '1' }),
   });
   assert.equal(res.status, 0, res.stderr);
   assert.match(res.stderr, /другой папке/);
@@ -184,7 +207,7 @@ test('cc -n on an already-running session attaches instead of silently starting 
   await waitFor(async () => tmuxCapture('claude-alreadyn').includes('FAKE'));
   const res = spawnSync(CC_BIN, ['-n', 'alreadyn'], {
     encoding: 'utf8',
-    env: { ...process.env, PATH: `${fakeBinDir}:${process.env.PATH}`, CLAUDE_MOBILE_HOME: home, CC_TMUX_SOCKET: socket, CC_NO_ATTACH: '1' },
+    env: baseEnv({ CC_NO_ATTACH: '1' }),
   });
   assert.equal(res.status, 0, res.stderr);
   assert.match(res.stderr, /флаг -n проигнорирован/);

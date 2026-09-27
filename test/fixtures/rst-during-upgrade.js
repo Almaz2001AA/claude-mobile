@@ -5,7 +5,7 @@ const net = require('node:net');
 const { createApp } = require('../../src/server');
 const { Auth, hashPin } = require('../../src/auth');
 
-const auth = new Auth({ pinHash: hashPin('1234'), secret: 'c'.repeat(64) });
+const auth = new Auth({ pinHash: hashPin('123456'), secret: 'c'.repeat(64) });
 // sessions.exists() resolves slowly, giving the RST time to land while handleUpgrade awaits it.
 const sessions = { exists: () => new Promise((resolve) => setTimeout(() => resolve(true), 300)), baseArgs: () => [] };
 const status = { get: () => ({ status: 'idle' }), on() {}, off() {} };

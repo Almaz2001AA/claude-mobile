@@ -9,6 +9,8 @@ set -u
 
 CM_HOME="${CLAUDE_MOBILE_HOME:-$HOME/.config/claude-mobile}"
 FAVORITES_FILE="$CM_HOME/favorites.json"
+# CLAUDE_PROJECTS_ROOT is test-only: it isolates tests from the user's real ~/.claude/projects.
+PROJECTS_ROOT="${CLAUDE_PROJECTS_ROOT:-$HOME/.claude/projects}"
 
 # CC_TMUX_SOCKET is test-only: it isolates tests on a private socket instead of
 # the real one that holds the user's actual Claude sessions.
@@ -50,6 +52,17 @@ sanitize_name() {
   else
     printf '%s' "$sanitized"
   fi
+}
+
+# Mirrors src/conversations.js: Claude Code stores each folder's conversations under
+# ~/.claude/projects/<encoded>/*.jsonl, where <encoded> is the absolute path with every
+# character that is not [A-Za-z0-9] replaced by '-'. `claude --continue` exits immediately
+# with "No conversation found to continue" when there is none, so only pass --continue when
+# this says one exists.
+has_conversation() {
+  local dir
+  dir="$PROJECTS_ROOT/$(printf '%s' "$1" | sed -E 's/[^A-Za-z0-9]/-/g')"
+  ls "$dir"/*.jsonl >/dev/null 2>&1
 }
 
 # Prints the favorite's cwd on stdout and exits 0 if $1 is a known favorite name;
@@ -141,7 +154,7 @@ fi
 
 if [ "$EXISTS" -eq 0 ]; then
   CLAUDE_BIN=$(resolve_claude)
-  if [ "$NEW" -eq 1 ]; then
+  if [ "$NEW" -eq 1 ] || ! has_conversation "$CWD"; then
     tmux_cmd new-session -d -s "$SESSION" -c "$CWD" "$CLAUDE_BIN"
   else
     tmux_cmd new-session -d -s "$SESSION" -c "$CWD" "$CLAUDE_BIN" --continue
