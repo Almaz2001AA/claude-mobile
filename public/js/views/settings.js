@@ -40,6 +40,60 @@ export function renderSettings(root) {
   stopBox.addEventListener('change', onPrefChange);
   permissionBox.addEventListener('change', onPrefChange);
 
+  const quickList = h('div', { class: 'item-list' });
+  const quickLabelInput = h('input', { placeholder: 'Название', maxlength: '20' });
+  const quickTextInput = h('input', { placeholder: 'Текст' });
+
+  async function loadQuick() {
+    try {
+      renderQuick(await api('GET', '/api/quick'));
+    } catch (err) {
+      toast(err.message);
+    }
+  }
+
+  function renderQuick(items) {
+    quickList.replaceChildren(...(items.length ? items.map((item, index) => h('div', { class: 'item-row' },
+      h('div', { class: 'item-info' },
+        h('div', { class: 'item-label' }, item.label),
+        h('div', { class: 'item-text' }, item.text)),
+      h('button', { class: 'danger', onclick: () => deleteQuick(items, index) }, 'Удалить'))) : [h('p', { class: 'hint' }, 'Нет быстрых кнопок')]));
+  }
+
+  async function saveQuick(items) {
+    try {
+      renderQuick(await api('PUT', '/api/quick', { items }));
+    } catch (err) {
+      toast(err.message);
+    }
+  }
+
+  function deleteQuick(items, index) {
+    saveQuick(items.filter((_, i) => i !== index));
+  }
+
+  async function addQuickCmd() {
+    const label = quickLabelInput.value.trim();
+    const text = quickTextInput.value;
+    if (!label || !text) return;
+    try {
+      const items = await api('GET', '/api/quick');
+      renderQuick(await api('PUT', '/api/quick', { items: [...items, { label, text }] }));
+      quickLabelInput.value = '';
+      quickTextInput.value = '';
+    } catch (err) {
+      toast(err.message);
+    }
+  }
+
+  async function resetQuick() {
+    try {
+      renderQuick(await api('PUT', '/api/quick', { reset: true }));
+    } catch (err) {
+      toast(err.message);
+    }
+  }
+
   async function refreshState() {
     if (!pushSupported()) {
       state.textContent = isStandalone()
@@ -66,6 +120,13 @@ export function renderSettings(root) {
       h('label', { class: 'check' }, permissionBox, 'Нужно подтверждение'),
       enableBtn,
       disableBtn,
+      h('h2', {}, 'Быстрые кнопки'),
+      quickList,
+      h('div', { class: 'quick-add' },
+        quickLabelInput,
+        quickTextInput,
+        h('button', { onclick: addQuickCmd }, 'Добавить')),
+      h('button', { class: 'wide', onclick: resetQuick }, 'Сбросить по умолчанию'),
       h('button', {
         class: 'danger wide',
         onclick: async () => {
@@ -75,4 +136,5 @@ export function renderSettings(root) {
       }, 'Выйти'))));
 
   refreshState();
+  loadQuick();
 }

@@ -13,6 +13,7 @@ const { StatusStore } = require('../src/status');
 const { PushService } = require('../src/push');
 const { Viewers } = require('../src/viewers');
 const { Recent } = require('../src/recent');
+const { QuickCommands } = require('../src/quick');
 const { wireNotifications } = require('../src/notifier');
 const { createApp } = require('../src/server');
 
@@ -55,6 +56,7 @@ function serve() {
     push,
     viewers,
     recent: new Recent(paths.recent),
+    quick: new QuickCommands(paths.quick),
     paths,
     hookSecret: getOrCreateSecret(paths.hookSecret),
     publicDir: path.join(ROOT, 'public'),

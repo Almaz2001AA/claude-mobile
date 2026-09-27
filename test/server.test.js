@@ -11,6 +11,7 @@ const { Auth, hashPin } = require('../src/auth');
 const { PushService } = require('../src/push');
 const { Viewers } = require('../src/viewers');
 const { Recent } = require('../src/recent');
+const { QuickCommands } = require('../src/quick');
 const { tmpDir, waitFor, killTmuxServer } = require('./helpers');
 
 const socket = `cm-test-${process.pid}-server`;
@@ -39,6 +40,7 @@ test.before(async () => {
     push: new PushService({ vapidFile: path.join(dir, 'vapid.json'), subsFile: path.join(dir, 'subs.json'), sender }),
     viewers: new Viewers(),
     recent: new Recent(path.join(dir, 'recent.json')),
+    quick: new QuickCommands(path.join(dir, 'quick.json')),
     paths: { uploads: path.join(dir, 'uploads') },
     hookSecret: SECRET,
     publicDir,
@@ -113,6 +115,21 @@ test('create, list, type into and delete a session', async () => {
   assert.equal((await call('DELETE', '/api/sessions/web')).status, 200);
   assert.equal((await call('DELETE', '/api/sessions/web')).status, 404);
   assert.equal((await call('GET', '/api/sessions/ghost/permission')).status, 404);
+});
+
+test('quick commands: defaults, save, validation and reset', async () => {
+  const defaults = await (await call('GET', '/api/quick')).json();
+  assert.equal(defaults.length, 6);
+  assert.deepEqual(defaults[0], { label: 'Продолжай', text: 'продолжай' });
+
+  const saved = await (await call('PUT', '/api/quick', { items: [{ label: 'Стоп', text: 'esc' }] })).json();
+  assert.deepEqual(saved, [{ label: 'Стоп', text: 'esc' }]);
+  assert.deepEqual(await (await call('GET', '/api/quick')).json(), saved);
+
+  assert.equal((await call('PUT', '/api/quick', { items: [{ label: '', text: 'x' }] })).status, 400);
+
+  const reset = await (await call('PUT', '/api/quick', { reset: true })).json();
+  assert.deepEqual(reset, defaults);
 });
 
 test('POST /api/sessions with resume:true passes resume through to sessions.create', async () => {

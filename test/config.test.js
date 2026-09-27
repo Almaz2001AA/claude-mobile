@@ -9,6 +9,7 @@ test('getPaths honours CLAUDE_MOBILE_HOME and CLAUDE_MOBILE_UPLOADS', () => {
   const p = getPaths({ CLAUDE_MOBILE_HOME: '/x/cfg', CLAUDE_MOBILE_UPLOADS: '/x/up' });
   assert.equal(p.base, '/x/cfg');
   assert.equal(p.links, '/x/cfg/links.json');
+  assert.equal(p.quick, '/x/cfg/quick.json');
   assert.equal(p.hookSecret, '/x/cfg/hook-secret');
   assert.equal(p.uploads, '/x/up');
 });

@@ -32,6 +32,7 @@ export function renderChat(root, { name }) {
   const messages = h('div', { class: 'messages' });
   const moreBtn = h('button', { class: 'more', onclick: loadMore }, 'Загрузить ещё');
   const permissionBox = h('div', { class: 'permission', hidden: true });
+  const quickChips = h('div', { class: 'quick-chips' });
   const textarea = h('textarea', { rows: '1', placeholder: 'Сообщение…', oninput: autoGrow });
   const fileInput = h('input', { type: 'file', hidden: true, onchange: upload });
 
@@ -42,6 +43,7 @@ export function renderChat(root, { name }) {
     messages,
     permissionBox,
     h('div', { class: 'composer' },
+      quickChips,
       h('div', { class: 'composer-row' },
         h('button', { class: 'icon-btn', 'aria-label': 'Прикрепить файл', onclick: () => fileInput.click() }, '📎'),
         textarea,
@@ -136,6 +138,14 @@ export function renderChat(root, { name }) {
     }
   }
 
+  async function sendText(text) {
+    try {
+      await api('POST', `${base}/input`, { text });
+    } catch (err) {
+      toast(err.message);
+    }
+  }
+
   async function send() {
     const text = textarea.value;
     if (!text.trim()) return;
@@ -150,6 +160,22 @@ export function renderChat(root, { name }) {
       textarea.disabled = false;
     }
   }
+
+  async function loadQuickChips() {
+    try {
+      const items = await api('GET', '/api/quick');
+      quickChips.replaceChildren(...items.map((item) => h('button', {
+        class: 'chip',
+        onclick: () => {
+          if (item.text === '/clear' && !confirm('Очистить контекст Claude в этой сессии?')) return;
+          sendText(item.text);
+        },
+      }, item.label)));
+    } catch (err) {
+      toast(err.message);
+    }
+  }
+  loadQuickChips();
 
   async function key(keyName) {
     try {

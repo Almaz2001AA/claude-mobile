@@ -9,6 +9,7 @@ function getPaths(env = process.env) {
     base,
     links: path.join(base, 'links.json'),
     recent: path.join(base, 'recent.json'),
+    quick: path.join(base, 'quick.json'),
     subscriptions: path.join(base, 'subscriptions.json'),
     vapid: path.join(base, 'vapid.json'),
     pin: path.join(base, 'pin'),

@@ -18,7 +18,7 @@ const WS_PATH_RE = /^\/ws\/(term|chat)\/([a-z0-9-]{1,32})$/;
 const authCookie = (value, maxAge) => `${COOKIE}=${value}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${maxAge}`;
 
 function createApp(deps) {
-  const { sessions, input, status, auth, push, viewers, recent, paths, hookSecret, publicDir, vendorFiles = {}, allowedOrigin = null, heartbeatIntervalMs = 30000 } = deps;
+  const { sessions, input, status, auth, push, viewers, recent, quick, paths, hookSecret, publicDir, vendorFiles = {}, allowedOrigin = null, heartbeatIntervalMs = 30000 } = deps;
   const routes = [];
   const on = (method, pattern, handler, { open = false } = {}) => routes.push({ method, pattern, handler, open });
   const isAuthed = (req) => auth.verify(parseCookies(req.headers.cookie)[COOKIE]);
@@ -85,6 +85,13 @@ function createApp(deps) {
   });
 
   on('GET', /^\/api\/recent-cwds$/, (req, res) => sendJson(res, 200, recent.list()));
+
+  on('GET', /^\/api\/quick$/, (req, res) => sendJson(res, 200, quick.list()));
+
+  on('PUT', /^\/api\/quick$/, async (req, res) => {
+    const { items, reset } = await readJsonBody(req);
+    sendJson(res, 200, reset === true ? quick.reset() : quick.save(items));
+  });
 
   on('GET', /^\/api\/sessions\/(?<name>[^/]+)\/history$/, async (req, res, p, url) => {
     const st = status.get(validateName(p.name));
