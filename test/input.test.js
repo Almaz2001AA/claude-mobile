@@ -28,6 +28,24 @@ test('sendText pastes multi-line text', async () => {
   await sessions.kill('multi');
 });
 
+test('sendText routes long single-line text through load-buffer/paste-buffer instead of a send-keys argv (avoids spawn E2BIG)', async () => {
+  // A real tmux round-trip can't distinguish the two mechanisms by terminal output (both
+  // end up typed), and a payload big enough to actually trip E2BIG is slow to capture from
+  // a wrapped terminal screen. Assert on the tmux subcommands issued instead.
+  const calls = [];
+  const fakeSessions = {
+    target: () => 'target',
+    tmux: async (args) => { calls.push(args[0]); return ''; },
+  };
+  const fakeInput = new InputSender({ sessions: fakeSessions, enterDelayMs: 0 });
+  await fakeInput.sendText('x', 'z'.repeat(4096));
+  assert.deepEqual(calls, ['send-keys', 'send-keys'], 'exactly at the threshold still uses send-keys');
+
+  calls.length = 0;
+  await fakeInput.sendText('x', 'z'.repeat(4097));
+  assert.deepEqual(calls, ['load-buffer', 'paste-buffer', 'send-keys'], 'over the threshold pastes via a buffer');
+});
+
 test('sendText rejects empty text', async () => {
   await assert.rejects(input.sendText('whatever', '   '), UserError);
 });

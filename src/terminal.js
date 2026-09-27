@@ -1,6 +1,5 @@
 const os = require('node:os');
 const pty = require('node-pty');
-const { PREFIX } = require('./sessions');
 const { clampInt } = require('./util');
 
 // One `tmux attach` per browser connection. Closing the socket only detaches; the session lives on.
@@ -8,7 +7,7 @@ function attachTerminal(ws, { sessions, name, cols, rows }) {
   const env = { ...process.env, TERM: 'xterm-256color' };
   delete env.TMUX;
   delete env.TMUX_PANE;
-  const term = pty.spawn('tmux', [...sessions.baseArgs(), 'attach-session', '-t', `=${PREFIX}${name}`], {
+  const term = pty.spawn('tmux', [...sessions.baseArgs(), 'attach-session', '-t', sessions.sessionTarget(name)], {
     name: 'xterm-256color',
     cols,
     rows,

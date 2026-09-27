@@ -24,9 +24,14 @@ class SessionManager {
     return this.socket ? ['-L', this.socket] : [];
   }
 
+  // Exact-match session target, shared by anything that needs `=claude-<name>` (no trailing pane colon).
+  sessionTarget(name) {
+    return `=${PREFIX}${validateName(name)}`;
+  }
+
   // Exact-match pane target for a session.
   target(name) {
-    return `=${PREFIX}${validateName(name)}:`;
+    return `${this.sessionTarget(name)}:`;
   }
 
   tmux(args, { input } = {}) {
@@ -35,6 +40,8 @@ class SessionManager {
         if (err) reject(new Error((stderr || err.message).trim()));
         else resolve(stdout);
       });
+      // tmux can exit (e.g. no server) before reading stdin; without this the EPIPE is an unhandled error.
+      child.stdin.on('error', () => {});
       child.stdin.end(input);
     });
   }
@@ -51,7 +58,7 @@ class SessionManager {
       .split('\n')
       .filter(Boolean)
       .map((line) => line.split('\t'))
-      .filter(([session]) => session.startsWith(PREFIX))
+      .filter(([session]) => session.startsWith(PREFIX) && NAME_RE.test(session.slice(PREFIX.length)))
       .map(([session, activity, cwd]) => ({
         name: session.slice(PREFIX.length),
         activity: Number(activity) * 1000,
@@ -61,7 +68,7 @@ class SessionManager {
 
   async exists(name) {
     try {
-      await this.tmux(['has-session', '-t', `=${PREFIX}${validateName(name)}`]);
+      await this.tmux(['has-session', '-t', this.sessionTarget(name)]);
       return true;
     } catch (err) {
       if (err instanceof UserError) throw err;
@@ -81,7 +88,7 @@ class SessionManager {
 
   async kill(name) {
     if (!(await this.exists(name))) throw new UserError('Сессия не найдена', 404);
-    await this.tmux(['kill-session', '-t', `=${PREFIX}${name}`]);
+    await this.tmux(['kill-session', '-t', this.sessionTarget(name)]);
   }
 
   capture(name) {

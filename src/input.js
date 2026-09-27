@@ -13,6 +13,8 @@ const KEYS = {
   'ctrl-c': 'C-c',
 };
 
+const MAX_INLINE_CHARS = 4096;
+
 class InputSender {
   constructor({ sessions, enterDelayMs = 150 }) {
     this.sessions = sessions;
@@ -22,7 +24,9 @@ class InputSender {
   async sendText(name, text) {
     if (typeof text !== 'string' || !text.trim()) throw new UserError('Пустое сообщение');
     const target = this.sessions.target(name);
-    if (text.includes('\n')) {
+    // A long single-line argument can blow past the OS argv size limit (spawn E2BIG); route it
+    // through a tmux buffer just like multi-line text instead of passing it as a send-keys argument.
+    if (text.includes('\n') || text.length > MAX_INLINE_CHARS) {
       const buffer = `cm-${process.pid}-${Date.now()}`;
       await this.sessions.tmux(['load-buffer', '-b', buffer, '-'], { input: text });
       await this.sessions.tmux(['paste-buffer', '-p', '-d', '-b', buffer, '-t', target]);

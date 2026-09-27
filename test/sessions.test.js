@@ -58,3 +58,20 @@ test('list ignores tmux sessions without the claude- prefix', async () => {
   await sessions.tmux(['kill-session', '-t', '=other']);
   await sessions.kill('mine');
 });
+
+test('list ignores claude- sessions whose remainder is not a valid name', async () => {
+  // A raw tmux session that merely starts with the prefix but whose suffix would fail
+  // validateName (uppercase, punctuation, empty) must never surface through the API.
+  await sessions.tmux(['new-session', '-d', '-s', 'claude-Bad Name', 'cat']);
+  await sessions.create('mine2', tmpDir());
+  assert.deepEqual((await sessions.list()).map((s) => s.name), ['mine2']);
+  await sessions.tmux(['kill-session', '-t', '=claude-Bad Name']);
+  await sessions.kill('mine2');
+});
+
+test('tmux() does not crash when tmux exits without reading stdin', async () => {
+  // No server is running for this socket name, so the tmux client exits immediately;
+  // feeding it a large stdin payload used to throw an unhandled EPIPE from the write.
+  const lonely = new SessionManager({ socket: `cm-test-${process.pid}-epipe`, claudeCmd: 'cat' });
+  await assert.rejects(lonely.tmux(['load-buffer', '-b', 'x', '-'], { input: 'y'.repeat(900000) }));
+});
