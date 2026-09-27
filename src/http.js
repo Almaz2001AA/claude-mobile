@@ -42,11 +42,18 @@ function readJsonBody(req, maxBytes = 1024 * 1024) {
     req.on('end', () => {
       if (tooBig) return;
       if (!chunks.length) return resolve({});
+      let parsed;
       try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+        parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       } catch {
-        reject(new UserError('Некорректный JSON'));
+        return reject(new UserError('Некорректный JSON'));
       }
+      // Route handlers destructure fields off the body; null, numbers, strings and arrays
+      // would otherwise pass this step and blow up later as a 500 instead of a clean 400.
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return reject(new UserError('Некорректный JSON'));
+      }
+      resolve(parsed);
     });
     req.on('error', reject);
   });

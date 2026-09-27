@@ -38,3 +38,41 @@ test('returns null when there is no dialog', () => {
 test('returns null when options do not start at 1', () => {
   assert.equal(parsePermissionDialog('Do you want to proceed?\n  2. No\n  3. Maybe'), null);
 });
+
+test('uses the LAST "Do you want to" line, not an earlier one quoted in Claude\'s own answer text', () => {
+  const screen = [
+    'Assistant: earlier I asked "Do you want to delete the file?" and you said no.',
+    '1. maybe not a real option',
+    '',
+    '╭─────────────────────────────────╮',
+    '│ Do you want to edit config.js?   │',
+    '│ ❯ 1. Yes                         │',
+    '│   2. No                          │',
+    '╰─────────────────────────────────╯',
+  ].join('\n');
+  const d = parsePermissionDialog(screen);
+  assert.equal(d.question, 'Do you want to edit config.js?');
+  assert.deepEqual(d.options, [
+    { key: '1', label: 'Yes' },
+    { key: '2', label: 'No' },
+  ]);
+});
+
+test('stops collecting options at the first non-option, non-blank, non-border line after the dialog box', () => {
+  const screen = [
+    '╭─────────────────────────────╮',
+    '│ Do you want to run npm test? │',
+    '│ ❯ 1. Yes                     │',
+    '│   2. No                      │',
+    '╰─────────────────────────────╯',
+    '',
+    'Sure! Here are the steps:',
+    '1. Run npm test',
+    '2. Check the output',
+  ].join('\n');
+  const d = parsePermissionDialog(screen);
+  assert.deepEqual(d.options, [
+    { key: '1', label: 'Yes' },
+    { key: '2', label: 'No' },
+  ]);
+});

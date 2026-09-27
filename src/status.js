@@ -1,3 +1,5 @@
+const os = require('node:os');
+const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const { readJson, writeJson } = require('./config');
 const { PREFIX } = require('./sessions');
@@ -10,10 +12,22 @@ function isPermissionNotification(event) {
 // Per-session status and tmux→transcript link, fed by Claude Code hook events.
 // Emits 'change' (name, entry, hookEventName).
 class StatusStore extends EventEmitter {
-  constructor({ file }) {
+  constructor({ file, projectsRoot = path.join(os.homedir(), '.claude', 'projects') } = {}) {
     super();
     this.file = file;
+    this.projectsRoot = projectsRoot;
     this.data = readJson(file, {});
+  }
+
+  // Hook events come from a script that runs as the same OS user, but treat the path it
+  // sends as untrusted input: only accept an absolute .jsonl path inside the configured
+  // projects root, so nothing else on disk can be pointed at as a "transcript" to read.
+  isValidTranscriptPath(transcriptPath) {
+    if (typeof transcriptPath !== 'string' || !transcriptPath.endsWith('.jsonl')) return false;
+    if (!path.isAbsolute(transcriptPath)) return false;
+    const resolvedRoot = path.resolve(this.projectsRoot);
+    const root = resolvedRoot.endsWith(path.sep) ? resolvedRoot : resolvedRoot + path.sep;
+    return path.resolve(transcriptPath).startsWith(root);
   }
 
   get(name) {
@@ -48,7 +62,12 @@ class StatusStore extends EventEmitter {
       default:
         return null;
     }
-    if (event.transcript_path) next.transcriptPath = event.transcript_path;
+    // An invalid path is silently ignored (the status update itself still applies) rather
+    // than rejecting the whole hook event: a broken/foreign transcript_path shouldn't stop
+    // the session's working/idle/waiting_permission state from updating.
+    if (event.transcript_path && this.isValidTranscriptPath(event.transcript_path)) {
+      next.transcriptPath = event.transcript_path;
+    }
     this.data[name] = next;
     writeJson(this.file, this.data);
     this.emit('change', name, next, event.hook_event_name);

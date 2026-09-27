@@ -38,6 +38,24 @@ test('installHooks backs up the old settings and refuses broken JSON', () => {
   assert.equal(fs.readFileSync(file, 'utf8'), '{broken');
 });
 
+test('installHooks writes through a symlinked settings file instead of replacing the link', () => {
+  const dir = tmpDir();
+  const real = path.join(dir, 'real-settings.json');
+  const link = path.join(dir, 'settings.json');
+  fs.writeFileSync(real, JSON.stringify({ theme: 'dark' }));
+  fs.symlinkSync(real, link);
+
+  const { backup } = installHooks({ settingsFile: link, command: 'CMD' });
+
+  assert.ok(fs.lstatSync(link).isSymbolicLink(), 'the settings.json path is still a symlink');
+  assert.equal(fs.realpathSync(link), real, 'still points at the real file');
+  const written = JSON.parse(fs.readFileSync(real, 'utf8'));
+  assert.equal(written.theme, 'dark');
+  assert.ok(written.hooks.Stop[0].hooks.some((h) => h.command === 'CMD'));
+  assert.ok(backup.startsWith(real), 'backup is made of the real file, not the link');
+  assert.equal(JSON.parse(fs.readFileSync(backup, 'utf8')).theme, 'dark');
+});
+
 test('notify.js exits quietly outside tmux', () => {
   const env = { ...process.env };
   delete env.TMUX;
@@ -59,7 +77,14 @@ test('notify.js inside a claude- tmux session posts the event with the session n
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const fixture = path.join(home, 'event.json');
-  fs.writeFileSync(fixture, JSON.stringify({ hook_event_name: 'Stop', session_id: 's1' }));
+  fs.writeFileSync(fixture, JSON.stringify({
+    hook_event_name: 'PostToolUse',
+    session_id: 's1',
+    transcript_path: '/t/s1.jsonl',
+    tool_name: 'Bash',
+    tool_input: { command: 'echo hi' },
+    tool_response: { stdout: 'x'.repeat(500000) },
+  }));
   execFileSync('tmux', [
     '-L', socket, 'new-session', '-d', '-s', 'claude-hooktest',
     '-e', `CLAUDE_MOBILE_HOME=${home}`,
@@ -70,6 +95,12 @@ test('notify.js inside a claude- tmux session posts the event with the session n
   assert.equal(received[0].url, '/internal/hook');
   assert.equal(received[0].secret, 's'.repeat(64));
   assert.equal(received[0].body.tmuxSession, 'claude-hooktest');
-  assert.equal(received[0].body.event.session_id, 's1');
+  // Only the whitelisted subset travels over the wire: the huge tool_response (and other
+  // PostToolUse fields) never leaves the box.
+  assert.deepEqual(received[0].body.event, {
+    hook_event_name: 'PostToolUse',
+    session_id: 's1',
+    transcript_path: '/t/s1.jsonl',
+  });
   server.close();
 });

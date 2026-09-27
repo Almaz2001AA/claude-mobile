@@ -21,6 +21,13 @@ async function waitFor(check, { timeoutMs = 3000, intervalMs = 50 } = {}) {
 
 function killTmuxServer(socket) {
   try { execFileSync('tmux', ['-L', socket, 'kill-server'], { stdio: 'ignore' }); } catch {}
+  // tmux leaves its socket file behind even after kill-server in some versions/timings;
+  // clean it up so test runs don't accumulate socket files in the tmux tmpdir. Only ever
+  // remove sockets that are clearly ours (the cm-test- prefix every test socket uses).
+  if (!socket.startsWith('cm-test-')) return;
+  const tmpBase = process.env.TMUX_TMPDIR || os.tmpdir();
+  const socketPath = path.join(tmpBase, `tmux-${process.getuid()}`, socket);
+  try { fs.unlinkSync(socketPath); } catch {}
 }
 
 const { EventEmitter } = require('node:events');

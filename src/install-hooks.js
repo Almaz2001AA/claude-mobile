@@ -29,12 +29,21 @@ function mergeHooks(settings, command) {
 function installHooks({ settingsFile, command = hookCommand() }) {
   let current = {};
   let backup = null;
-  if (fs.existsSync(settingsFile)) {
-    current = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
-    backup = `${settingsFile}.bak-${Date.now()}`;
-    fs.copyFileSync(settingsFile, backup);
+  // If settingsFile is a symlink (Claude Code's settings.json is sometimes managed this way,
+  // e.g. dotfiles synced across machines), write through to the real file instead of
+  // replacing the link itself with a plain file.
+  let target = settingsFile;
+  try {
+    target = fs.realpathSync(settingsFile);
+  } catch {
+    // Doesn't exist yet, or a broken link: fall back to the given path as-is.
   }
-  writeJson(settingsFile, mergeHooks(current, command));
+  if (fs.existsSync(target)) {
+    current = JSON.parse(fs.readFileSync(target, 'utf8'));
+    backup = `${target}.bak-${Date.now()}`;
+    fs.copyFileSync(target, backup);
+  }
+  writeJson(target, mergeHooks(current, command));
   return { backup };
 }
 

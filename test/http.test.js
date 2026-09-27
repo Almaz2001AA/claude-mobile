@@ -47,6 +47,22 @@ test('sendJson and readJsonBody', async () => {
   });
 });
 
+test('readJsonBody rejects valid JSON that is not a plain object', async () => {
+  await withServer(async (req, res) => {
+    try {
+      sendJson(res, 200, { got: await readJsonBody(req) });
+    } catch (err) {
+      sendJson(res, err.status, { error: err.message });
+    }
+  }, async (base) => {
+    for (const body of ['null', '42', '"hello"', '[1,2,3]', 'true']) {
+      const res = await fetch(base, { method: 'POST', body });
+      assert.equal(res.status, 400, body);
+      assert.equal((await res.json()).error, 'Некорректный JSON');
+    }
+  });
+});
+
 test('serveStatic serves files with types and blocks traversal', async () => {
   const root = tmpDir();
   fs.writeFileSync(path.join(root, 'index.html'), '<h1>hi</h1>');
