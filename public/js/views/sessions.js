@@ -49,6 +49,7 @@ export function renderSessions(root) {
   const favoritesSection = h('div', { class: 'favorites-section', hidden: true });
   const favoritesChips = h('div', { class: 'favorites-chips' });
   let stopped = false;
+  let openDialog = null;
 
   favoritesSection.append(h('h2', {}, 'Избранное'), favoritesChips);
 
@@ -159,8 +160,12 @@ export function renderSessions(root) {
       h('div', { class: 'row' },
         h('button', { type: 'button', onclick: () => dialog.close() }, 'Отмена'),
         h('button', { type: 'submit', class: 'primary' }, 'Создать'))));
-    dialog.addEventListener('close', () => dialog.remove());
+    dialog.addEventListener('close', () => {
+      if (openDialog === dialog) openDialog = null;
+      dialog.remove();
+    });
     document.body.append(dialog);
+    openDialog = dialog;
     dialog.showModal();
     api('GET', '/api/recent-cwds').then((dirs) => {
       chips.replaceChildren(...dirs.map((dir) => h('button', {
@@ -184,5 +189,8 @@ export function renderSessions(root) {
     stopped = true;
     clearInterval(timer);
     document.removeEventListener('visibilitychange', onVisible);
+    // Otherwise a dialog left open while navigating away (e.g. back-swipe, a favorite chip
+    // tap) keeps sitting in the DOM on top of whatever view renders next.
+    openDialog?.close();
   };
 }

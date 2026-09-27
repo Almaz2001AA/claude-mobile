@@ -5,6 +5,30 @@ const { UserError } = require('./errors');
 // Apple rejects VAPID subjects on localhost-style domains, so default to a neutral mailto.
 const DEFAULT_SUBJECT = process.env.CLAUDE_MOBILE_PUSH_SUBJECT || 'mailto:admin@example.com';
 
+// The only hosts a real browser push subscription's endpoint can point at. Without this, the
+// login-authenticated /api/push/subscribe endpoint would happily store (and later POST a
+// VAPID-signed payload to) an arbitrary URL of the attacker's choosing -- an SSRF primitive.
+const ALLOWED_PUSH_HOSTS = [
+  'web.push.apple.com',
+  'fcm.googleapis.com',
+  'updates.push.services.mozilla.com',
+  'push.services.mozilla.com',
+  'notify.windows.com',
+];
+
+function isAllowedPushEndpoint(endpoint) {
+  let url;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== 'https:') return false;
+  // Exact host, or a proper subdomain of it (a `.` boundary, not a bare suffix match: e.g.
+  // "evilfcm.googleapis.com" must NOT count as ending with "fcm.googleapis.com").
+  return ALLOWED_PUSH_HOSTS.some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`));
+}
+
 function normalizePrefs(prefs) {
   return { stop: prefs?.stop !== false, permission: prefs?.permission !== false };
 }
@@ -28,6 +52,7 @@ class PushService {
   }
 
   subscribe(subscription, prefs) {
+    if (!isAllowedPushEndpoint(subscription.endpoint)) throw new UserError('Недопустимый адрес push-подписки');
     this.subs = this.subs.filter((s) => s.subscription.endpoint !== subscription.endpoint);
     this.subs.push({ subscription, prefs: normalizePrefs(prefs) });
     this.save();
@@ -64,4 +89,4 @@ class PushService {
   }
 }
 
-module.exports = { PushService };
+module.exports = { PushService, isAllowedPushEndpoint };

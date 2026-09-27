@@ -44,11 +44,16 @@ export function renderTerminal(root, { name }) {
   term.open(container);
   fit.fit();
 
+  let goneTimer = null;
   const socket = connectWs(() => `/ws/term/${name}?cols=${term.cols}&rows=${term.rows}`, {
     onMessage: (data) => term.write(data),
     onStatus(state) {
       offline.hidden = state !== 'offline';
-      if (state === 'gone') term.write('\r\n\x1b[33m[Сессия завершена]\x1b[0m\r\n');
+      if (state === 'gone') {
+        term.write('\r\n\x1b[33m[Сессия завершена]\x1b[0m\r\n');
+        // Give the message a moment on screen before leaving, like chat does with its toast.
+        goneTimer = setTimeout(() => { location.hash = '#/'; }, 1500);
+      }
     },
   });
 
@@ -75,6 +80,7 @@ export function renderTerminal(root, { name }) {
   return () => {
     window.removeEventListener('resize', refit);
     window.visualViewport?.removeEventListener('resize', refit);
+    clearTimeout(goneTimer);
     socket.close();
     term.dispose();
   };

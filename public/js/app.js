@@ -15,7 +15,16 @@ function parseRoute(hash) {
   const parts = hash.replace(/^#\/?/, '').split('/').filter(Boolean);
   if (parts[0] === 'login') return { view: 'login' };
   if (parts[0] === 'settings') return { view: 'settings' };
-  if (parts[0] === 's' && parts[1]) return { view: parts[2] === 'term' ? 'terminal' : 'chat', name: decodeURIComponent(parts[1]) };
+  if (parts[0] === 's' && parts[1]) {
+    try {
+      return { view: parts[2] === 'term' ? 'terminal' : 'chat', name: decodeURIComponent(parts[1]) };
+    } catch {
+      // A malformed %-escape (e.g. a bare "%" from a stray share-sheet edit) throws instead
+      // of just failing to decode: fall back to the sessions list rather than a blank screen.
+      location.hash = '#/';
+      return { view: 'sessions' };
+    }
+  }
   return { view: 'sessions' };
 }
 

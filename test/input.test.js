@@ -46,6 +46,26 @@ test('sendText routes long single-line text through load-buffer/paste-buffer ins
   assert.deepEqual(calls, ['load-buffer', 'paste-buffer', 'send-keys'], 'over the threshold pastes via a buffer');
 });
 
+test('the paste-buffer name is unique across calls, even ones landing in the same millisecond', async () => {
+  const bufferNames = [];
+  const fakeSessions = {
+    target: () => 'target',
+    tmux: async (args) => {
+      if (args[0] === 'load-buffer') bufferNames.push(args[2]);
+      return '';
+    },
+  };
+  const fakeInput = new InputSender({ sessions: fakeSessions, enterDelayMs: 0 });
+  // All fired without awaiting in between, so Date.now() alone could plausibly repeat.
+  await Promise.all([
+    fakeInput.sendText('x', 'multi\nline-a'),
+    fakeInput.sendText('x', 'multi\nline-b'),
+    fakeInput.sendText('x', 'multi\nline-c'),
+  ]);
+  assert.equal(bufferNames.length, 3);
+  assert.equal(new Set(bufferNames).size, 3, `expected 3 distinct buffer names, got ${JSON.stringify(bufferNames)}`);
+});
+
 test('sendText rejects empty text', async () => {
   await assert.rejects(input.sendText('whatever', '   '), UserError);
 });

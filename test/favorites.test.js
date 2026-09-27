@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 const { Favorites } = require('../src/favorites');
 const { UserError } = require('../src/errors');
@@ -19,6 +20,16 @@ test('save validates, persists and round-trips; get finds by name', () => {
   assert.deepEqual(saved, [{ name: 'work', cwd: dir }]);
   assert.deepEqual(new Favorites(file).list(), [{ name: 'work', cwd: dir }]);
   assert.deepEqual(favorites.get('work'), { name: 'work', cwd: dir });
+});
+
+test('a file holding valid JSON that is not an array falls back to [] instead of throwing', () => {
+  for (const bad of ['{}', '"oops"', '42', 'null', 'false']) {
+    const file = path.join(tmpDir(), 'favorites.json');
+    fs.writeFileSync(file, bad);
+    const favorites = new Favorites(file);
+    assert.deepEqual(favorites.list(), [], `bad content: ${bad}`);
+    assert.equal(favorites.get('x'), null);
+  }
 });
 
 test('save rejects bad names, relative/missing cwd, duplicates and too many items', () => {

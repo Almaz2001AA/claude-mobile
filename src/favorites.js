@@ -27,7 +27,10 @@ function validateItems(items) {
 class Favorites {
   constructor(file) {
     this.file = file;
-    this.items = readJson(file, []);
+    // A file holding valid-but-wrong-shaped JSON (an object, a string, ...) instead of an
+    // array falls back to [] too -- otherwise list()'s `[...this.items]` throws.
+    const stored = readJson(file, []);
+    this.items = Array.isArray(stored) ? stored : [];
   }
 
   list() {

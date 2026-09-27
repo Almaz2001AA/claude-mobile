@@ -201,6 +201,14 @@ export function renderChat(root, { name }) {
     }
   }
 
+  // Resolved once, when the socket opens, and cached: on iOS the page can freeze (screen
+  // lock, app switch) right as visibilitychange/pagehide fires, and an unresolved
+  // `await getEndpoint()` at that moment means the "not visible any more" message never
+  // reaches the server, which then keeps believing the chat is visible and suppresses the
+  // "done" push notification. Sending synchronously with whatever endpoint we already have
+  // (even null, before push is enabled) is far more important than always being exact.
+  let cachedEndpoint = null;
+
   const socket = connectWs(`/ws/chat/${name}`, {
     onMessage(raw) {
       const msg = JSON.parse(raw);
@@ -220,7 +228,12 @@ export function renderChat(root, { name }) {
     },
     onStatus(state) {
       offline.hidden = state !== 'offline';
-      if (state === 'open') reportVisibility();
+      if (state === 'open') {
+        getEndpoint().then((endpoint) => {
+          cachedEndpoint = endpoint;
+          reportVisibility();
+        });
+      }
       if (state === 'gone') {
         toast('Сессия завершена');
         location.hash = '#/';
@@ -228,10 +241,13 @@ export function renderChat(root, { name }) {
     },
   });
 
-  async function reportVisibility() {
-    socket.send({ type: 'visibility', visible: document.visibilityState === 'visible', endpoint: await getEndpoint() });
+  function reportVisibility() {
+    socket.send({ type: 'visibility', visible: document.visibilityState === 'visible', endpoint: cachedEndpoint });
   }
   document.addEventListener('visibilitychange', reportVisibility);
+  // visibilitychange doesn't fire on iOS when Safari is force-quit/backgrounded hard enough;
+  // pagehide is the last reliable moment to tell the server "not visible any more".
+  window.addEventListener('pagehide', reportVisibility);
 
   // The Notification hook can fire a moment before the dialog is drawn; keep checking while waiting.
   const permissionTimer = setInterval(() => {
@@ -243,6 +259,7 @@ export function renderChat(root, { name }) {
   return () => {
     clearInterval(permissionTimer);
     document.removeEventListener('visibilitychange', reportVisibility);
+    window.removeEventListener('pagehide', reportVisibility);
     socket.close();
   };
 }

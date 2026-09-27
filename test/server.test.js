@@ -287,11 +287,15 @@ test('upload stores the raw body', async () => {
 });
 
 test('push subscription endpoints', async () => {
+  const endpoint = 'https://fcm.googleapis.com/fcm/send/p';
   assert.deepEqual(await (await call('GET', '/api/push/key')).json(), { key: 'PUB' });
-  assert.equal((await call('POST', '/api/push/subscribe', { subscription: { endpoint: 'https://p' }, prefs: { stop: false } })).status, 200);
+  assert.equal((await call('POST', '/api/push/subscribe', { subscription: { endpoint }, prefs: { stop: false } })).status, 200);
   assert.equal((await call('POST', '/api/push/subscribe', { prefs: {} })).status, 400);
-  assert.equal((await call('POST', '/api/push/prefs', { endpoint: 'https://p', prefs: { permission: false } })).status, 200);
-  assert.equal((await call('POST', '/api/push/unsubscribe', { endpoint: 'https://p' })).status, 200);
+  // Only a real push service's endpoint is accepted (item 14): an arbitrary URL would let an
+  // authenticated attacker make this server POST a VAPID-signed payload wherever they like.
+  assert.equal((await call('POST', '/api/push/subscribe', { subscription: { endpoint: 'https://evil.example/collect' } })).status, 400);
+  assert.equal((await call('POST', '/api/push/prefs', { endpoint, prefs: { permission: false } })).status, 200);
+  assert.equal((await call('POST', '/api/push/unsubscribe', { endpoint })).status, 200);
 });
 
 function openWs(url, headers) {

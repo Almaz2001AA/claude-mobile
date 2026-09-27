@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 const { QuickCommands, DEFAULTS } = require('../src/quick');
 const { UserError } = require('../src/errors');
@@ -28,6 +29,14 @@ test('save rejects bad shapes', () => {
   assert.throws(() => quick.save([{ label: 'ok', text: '' }]), UserError);
   assert.throws(() => quick.save([{ label: 'ok', text: 'x'.repeat(2001) }]), UserError);
   assert.throws(() => quick.save(Array.from({ length: 31 }, () => ({ label: 'a', text: 'b' }))), UserError);
+});
+
+test('a file holding valid JSON that is not an array falls back to the defaults instead of throwing', () => {
+  for (const bad of ['{}', '"oops"', '42', 'null', 'false']) {
+    const file = path.join(tmpDir(), 'quick.json');
+    fs.writeFileSync(file, bad);
+    assert.deepEqual(new QuickCommands(file).list(), DEFAULTS, `bad content: ${bad}`);
+  }
 });
 
 test('reset restores the defaults and persists them', () => {

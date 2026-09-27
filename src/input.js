@@ -1,3 +1,4 @@
+const crypto = require('node:crypto');
 const { UserError } = require('./errors');
 const { delay } = require('./util');
 const { parsePermissionDialog } = require('./permission');
@@ -19,6 +20,7 @@ class InputSender {
   constructor({ sessions, enterDelayMs = 150 }) {
     this.sessions = sessions;
     this.enterDelayMs = enterDelayMs;
+    this.bufferCounter = 0;
   }
 
   async sendText(name, text) {
@@ -27,7 +29,13 @@ class InputSender {
     // A long single-line argument can blow past the OS argv size limit (spawn E2BIG); route it
     // through a tmux buffer just like multi-line text instead of passing it as a send-keys argument.
     if (text.includes('\n') || text.length > MAX_INLINE_CHARS) {
-      const buffer = `cm-${process.pid}-${Date.now()}`;
+      // pid+timestamp alone can collide: two sendText() calls landing in the same millisecond
+      // (e.g. two composer sends firing back to back) would then load-buffer into the same
+      // name, and the second load-buffer's -d in paste-buffer could delete/paste the wrong
+      // (still in-flight) buffer out from under the first. A per-instance counter plus a
+      // random suffix makes every buffer name unique regardless of timing.
+      this.bufferCounter += 1;
+      const buffer = `cm-${process.pid}-${Date.now()}-${this.bufferCounter}-${crypto.randomBytes(4).toString('hex')}`;
       await this.sessions.tmux(['load-buffer', '-b', buffer, '-'], { input: text });
       await this.sessions.tmux(['paste-buffer', '-p', '-d', '-b', buffer, '-t', target]);
     } else {

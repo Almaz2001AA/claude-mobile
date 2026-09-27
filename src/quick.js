@@ -29,7 +29,11 @@ function validateItems(items) {
 class QuickCommands {
   constructor(file) {
     this.file = file;
-    this.items = readJson(file, null) || DEFAULTS.map((d) => ({ ...d }));
+    // A missing file (readJson's null fallback) falls back to the defaults; so does a file
+    // that somehow holds valid-but-wrong-shaped JSON (an object, a string, ...) instead of an
+    // array -- otherwise list()'s `[...this.items]` throws on the next request.
+    const stored = readJson(file, null);
+    this.items = Array.isArray(stored) ? stored : DEFAULTS.map((d) => ({ ...d }));
   }
 
   list() {
