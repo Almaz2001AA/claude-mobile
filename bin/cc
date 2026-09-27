@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# cc: quick launcher for Claude Code tmux sessions from the PC over SSH.
+# See README "Быстрый запуск с ПК: cc" for usage and PowerShell setup.
+#
+# Sessions live in the same tmux namespace (claude-<name>) that claude-mobile
+# manages, so a session started here shows up in the app and vice versa.
+
+set -u
+
+CM_HOME="${CLAUDE_MOBILE_HOME:-$HOME/.config/claude-mobile}"
+FAVORITES_FILE="$CM_HOME/favorites.json"
+
+# CC_TMUX_SOCKET is test-only: it isolates tests on a private socket instead of
+# the real one that holds the user's actual Claude sessions.
+TMUX_ARGS=()
+if [ -n "${CC_TMUX_SOCKET:-}" ]; then
+  TMUX_ARGS=(-L "$CC_TMUX_SOCKET")
+fi
+
+tmux_cmd() {
+  tmux "${TMUX_ARGS[@]}" "$@"
+}
+
+resolve_claude() {
+  local found
+  found=$(command -v claude 2>/dev/null)
+  if [ -n "$found" ]; then
+    printf '%s' "$found"
+  else
+    printf '%s' "$HOME/.local/bin/claude"
+  fi
+}
+
+sanitize_name() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g' | cut -c1-32
+}
+
+# Prints the favorite's cwd on stdout and exits 0 if $1 is a known favorite name;
+# exits 1 (nothing printed) otherwise.
+favorite_cwd() {
+  local name="$1"
+  [ -f "$FAVORITES_FILE" ] || return 1
+  node -e '
+const fs = require("fs");
+const [, file, name] = process.argv;
+let items;
+try { items = JSON.parse(fs.readFileSync(file, "utf8")); } catch { process.exit(1); }
+if (!Array.isArray(items)) process.exit(1);
+const fav = items.find((f) => f && f.name === name);
+if (!fav || typeof fav.cwd !== "string") process.exit(1);
+process.stdout.write(fav.cwd);
+' "$FAVORITES_FILE" "$name"
+}
+
+list_sessions() {
+  local out
+  out=$(tmux_cmd list-sessions -F $'#{session_name}\t#{pane_current_path}' 2>/dev/null)
+  [ -z "$out" ] && return 0
+  while IFS=$'\t' read -r session path; do
+    case "$session" in
+      claude-*) printf '%-32s %s\n' "${session#claude-}" "$path" ;;
+    esac
+  done <<< "$out"
+}
+
+usage() {
+  cat >&2 <<'USAGE'
+Использование:
+  cc                 открыть/создать сессию для текущей папки
+  cc <имя|путь>      открыть/создать сессию по имени избранного или по пути
+  cc -n [имя|путь]   начать НОВЫЙ разговор (без --continue)
+  cc ls              список запущенных сессий claude-*
+USAGE
+}
+
+NEW=0
+POSITIONAL=()
+for arg in "$@"; do
+  case "$arg" in
+    -n) NEW=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) POSITIONAL+=("$arg") ;;
+  esac
+done
+
+if [ "${POSITIONAL[0]:-}" = "ls" ]; then
+  list_sessions
+  exit 0
+fi
+
+TARGET="${POSITIONAL[0]:-}"
+
+if [ -z "$TARGET" ]; then
+  CWD="$PWD"
+  NAME=$(sanitize_name "$(basename "$CWD")")
+elif FAV_CWD=$(favorite_cwd "$TARGET"); then
+  CWD="$FAV_CWD"
+  NAME="$TARGET"
+elif [ -d "$TARGET" ]; then
+  CWD=$(cd "$TARGET" 2>/dev/null && pwd)
+  NAME=$(sanitize_name "$(basename "$CWD")")
+else
+  echo "Не найдено: $TARGET. Добавьте папку в избранное в приложении или укажите путь." >&2
+  exit 1
+fi
+
+SESSION="claude-$NAME"
+
+if tmux_cmd has-session -t "=$SESSION" 2>/dev/null; then
+  EXISTS=1
+else
+  EXISTS=0
+fi
+
+if [ "$EXISTS" -eq 0 ]; then
+  CLAUDE_BIN=$(resolve_claude)
+  if [ "$NEW" -eq 1 ]; then
+    tmux_cmd new-session -d -s "$SESSION" -c "$CWD" "$CLAUDE_BIN"
+  else
+    tmux_cmd new-session -d -s "$SESSION" -c "$CWD" "$CLAUDE_BIN" --continue
+  fi
+fi
+
+# CC_NO_ATTACH is test-only: attaching needs a real TTY, which tests don't have.
+if [ "${CC_NO_ATTACH:-}" = "1" ]; then
+  exit 0
+fi
+
+if [ -n "${TMUX:-}" ]; then
+  tmux_cmd switch-client -t "=$SESSION"
+else
+  exec tmux_cmd attach-session -t "=$SESSION"
+fi
