@@ -45,6 +45,14 @@ test('a client RST while handleUpgrade awaits sessions.exists() does not crash t
   assert.match(res.stdout, /still alive after RST/);
 });
 
+test('a WS frame over maxPayload does not crash the process, and the server keeps answering other requests', () => {
+  const script = path.join(__dirname, 'fixtures', 'oversized-frame.js');
+  const res = spawnSync(process.execPath, [script], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(res.status, 0, `child crashed:\n${res.stderr}`);
+  assert.match(res.stdout, /still alive after oversized frame/);
+  assert.match(res.stdout, /http status after oversized frame: 401/);
+});
+
 test('close() terminates open WebSockets instead of waiting for them to disconnect on their own', async () => {
   const app = createApp(fakeDeps());
   const port = await listen(app);

@@ -274,6 +274,9 @@ function createApp(deps) {
       // attachTerminal/attachChat had a chance to register its 'message' listener.
       const exists = await sessions.exists(name);
       wss.handleUpgrade(req, socket, head, (ws) => {
+        // A WS-level error (e.g. a client frame over maxPayload) is otherwise an unhandled
+        // 'error' event, which crashes the whole process.
+        ws.on('error', () => ws.terminate());
         ws.isAlive = true;
         ws.on('pong', () => { ws.isAlive = true; });
         if (!exists) return ws.close(4004, 'Сессия не найдена');

@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 const { tmpDir, waitFor, killTmuxServer } = require('./helpers');
 
 const CC_BIN = path.resolve(__dirname, '..', 'bin', 'cc');
@@ -108,6 +108,89 @@ test('cc does not recreate an already-running session', async () => {
   const pane = tmuxCapture('claude-already');
   assert.equal(pane.match(/FAKE/g).length, 1, 'claude was only launched once');
   execFileSync('tmux', ['-L', socket, 'kill-session', '-t', '=claude-already']);
+});
+
+test('cc actually execs tmux attach-session (not a shell function) when not already inside tmux', async () => {
+  const cwd = tmpDir();
+  writeFavorites([{ name: 'attachme', cwd }]);
+  const wrapperDir = tmpDir();
+  const log = path.join(wrapperDir, 'log');
+  const realTmux = execFileSync('sh', ['-c', 'command -v tmux'], { encoding: 'utf8' }).trim();
+  const wrapper = path.join(wrapperDir, 'tmux');
+  // Logs every invocation; fakes a successful `attach-session` (no real TTY in tests) and
+  // otherwise execs the real tmux so session creation still actually happens.
+  fs.writeFileSync(wrapper, [
+    '#!/bin/sh',
+    `printf '%s\\n' "$*" >> "${log}"`,
+    'for a in "$@"; do',
+    '  if [ "$a" = "attach-session" ]; then',
+    '    exit 0',
+    '  fi',
+    'done',
+    `exec "${realTmux}" "$@"`,
+    '',
+  ].join('\n'));
+  fs.chmodSync(wrapper, 0o755);
+
+  execFileSync(CC_BIN, ['attachme'], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      PATH: `${wrapperDir}:${fakeBinDir}:${process.env.PATH}`,
+      CLAUDE_MOBILE_HOME: home,
+      CC_TMUX_SOCKET: socket,
+      // Deliberately no CC_NO_ATTACH: this exercises the real (non-test-shortcut) attach path.
+    },
+  });
+  const logged = fs.readFileSync(log, 'utf8').trim().split('\n');
+  const attachLine = logged.find((l) => l.includes('attach-session'));
+  assert.ok(attachLine, `expected an attach-session call, got:\n${logged.join('\n')}`);
+  assert.match(attachLine, /attach-session -t =claude-attachme/);
+  execFileSync('tmux', ['-L', socket, 'kill-session', '-t', '=claude-attachme']);
+});
+
+test('cc falls back to a hash-based name for a folder whose basename sanitizes to nothing', async () => {
+  const parent = tmpDir();
+  const cwd = path.join(parent, '日本語');
+  fs.mkdirSync(cwd);
+  writeFavorites([]);
+  runCc([cwd]);
+  const out = runCc(['ls']);
+  const match = out.match(/^(d-[0-9a-f]{8})\s+/m);
+  assert.ok(match, `expected a d-<hash> session name in:\n${out}`);
+  execFileSync('tmux', ['-L', socket, 'kill-session', '-t', `=claude-${match[1]}`]);
+});
+
+test('cc warns to stderr when an existing session was started in a different folder', async () => {
+  const cwd1 = tmpDir();
+  const cwd2 = tmpDir();
+  writeFavorites([{ name: 'moved', cwd: cwd1 }]);
+  runCc(['moved']);
+  await waitFor(async () => tmuxCapture('claude-moved').includes('FAKE'));
+  writeFavorites([{ name: 'moved', cwd: cwd2 }]);
+  const res = spawnSync(CC_BIN, ['moved'], {
+    encoding: 'utf8',
+    env: { ...process.env, PATH: `${fakeBinDir}:${process.env.PATH}`, CLAUDE_MOBILE_HOME: home, CC_TMUX_SOCKET: socket, CC_NO_ATTACH: '1' },
+  });
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stderr, /другой папке/);
+  execFileSync('tmux', ['-L', socket, 'kill-session', '-t', '=claude-moved']);
+});
+
+test('cc -n on an already-running session attaches instead of silently starting a new conversation', async () => {
+  const cwd = tmpDir();
+  writeFavorites([{ name: 'alreadyn', cwd }]);
+  runCc(['alreadyn']);
+  await waitFor(async () => tmuxCapture('claude-alreadyn').includes('FAKE'));
+  const res = spawnSync(CC_BIN, ['-n', 'alreadyn'], {
+    encoding: 'utf8',
+    env: { ...process.env, PATH: `${fakeBinDir}:${process.env.PATH}`, CLAUDE_MOBILE_HOME: home, CC_TMUX_SOCKET: socket, CC_NO_ATTACH: '1' },
+  });
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stderr, /флаг -n проигнорирован/);
+  const pane = tmuxCapture('claude-alreadyn');
+  assert.equal(pane.match(/FAKE/g).length, 1, 'claude was only launched once');
+  execFileSync('tmux', ['-L', socket, 'kill-session', '-t', '=claude-alreadyn']);
 });
 
 test('cc ls lists claude-* sessions with their name and path', async () => {

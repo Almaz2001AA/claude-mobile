@@ -31,8 +31,25 @@ resolve_claude() {
   fi
 }
 
+sha1_prefix() {
+  if command -v sha1sum >/dev/null 2>&1; then
+    printf '%s' "$1" | sha1sum | cut -c1-8
+  else
+    # BSD/macOS fallback: shasum is sha1sum's usual stand-in there.
+    printf '%s' "$1" | shasum | cut -c1-8
+  fi
+}
+
+# $1: raw text to derive a name from (e.g. a folder's basename). $2: the full path, used
+# only as the hash source when $1 sanitizes to nothing (non-ASCII folder names and the like).
 sanitize_name() {
-  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g' | cut -c1-32
+  local sanitized
+  sanitized=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g' | cut -c1-32)
+  if [ -z "${sanitized//-/}" ]; then
+    printf 'd-%s' "$(sha1_prefix "${2:-$1}")"
+  else
+    printf '%s' "$sanitized"
+  fi
 }
 
 # Prints the favorite's cwd on stdout and exits 0 if $1 is a known favorite name;
@@ -92,13 +109,13 @@ TARGET="${POSITIONAL[0]:-}"
 
 if [ -z "$TARGET" ]; then
   CWD="$PWD"
-  NAME=$(sanitize_name "$(basename "$CWD")")
+  NAME=$(sanitize_name "$(basename "$CWD")" "$CWD")
 elif FAV_CWD=$(favorite_cwd "$TARGET"); then
   CWD="$FAV_CWD"
   NAME="$TARGET"
 elif [ -d "$TARGET" ]; then
   CWD=$(cd "$TARGET" 2>/dev/null && pwd)
-  NAME=$(sanitize_name "$(basename "$CWD")")
+  NAME=$(sanitize_name "$(basename "$CWD")" "$CWD")
 else
   echo "Не найдено: $TARGET. Добавьте папку в избранное в приложении или укажите путь." >&2
   exit 1
@@ -110,6 +127,16 @@ if tmux_cmd has-session -t "=$SESSION" 2>/dev/null; then
   EXISTS=1
 else
   EXISTS=0
+fi
+
+if [ "$EXISTS" -eq 1 ]; then
+  EXISTING_PATH=$(tmux_cmd list-panes -t "=$SESSION" -F '#{pane_current_path}' 2>/dev/null | head -n1)
+  if [ -n "$EXISTING_PATH" ] && [ -n "$CWD" ] && [ "$EXISTING_PATH" != "$CWD" ]; then
+    echo "Внимание: сессия «$SESSION» уже запущена в другой папке ($EXISTING_PATH), а не в $CWD" >&2
+  fi
+  if [ "$NEW" -eq 1 ]; then
+    echo "Сессия «$SESSION» уже запущена — подключаюсь к ней (флаг -n проигнорирован: новый разговор не начат)." >&2
+  fi
 fi
 
 if [ "$EXISTS" -eq 0 ]; then
@@ -129,5 +156,7 @@ fi
 if [ -n "${TMUX:-}" ]; then
   tmux_cmd switch-client -t "=$SESSION"
 else
-  exec tmux_cmd attach-session -t "=$SESSION"
+  # `exec tmux_cmd ...` doesn't work: exec replaces the process image with a program found on
+  # PATH, and a shell function is not one, so it fails silently and attach never happens.
+  exec tmux "${TMUX_ARGS[@]}" attach-session -t "=$SESSION"
 fi
