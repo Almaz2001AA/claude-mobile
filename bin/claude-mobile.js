@@ -4,7 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const readline = require('node:readline/promises');
 const { execFileSync } = require('node:child_process');
-const { getPaths, getPort, getOrCreateSecret } = require('../src/config');
+const { getPaths, getPort, getOrCreateSecret, rotateSecret } = require('../src/config');
 const { hashPin, Auth } = require('../src/auth');
 const { installHooks } = require('../src/install-hooks');
 const { SessionManager } = require('../src/sessions');
@@ -42,7 +42,7 @@ function serve() {
     console.error('PIN не задан. Выполните: claude-mobile set-pin');
     process.exit(1);
   }
-  const sessions = new SessionManager({ claudeCmd: resolveClaude() });
+  const sessions = new SessionManager({ claudeCmd: resolveClaude(), socket: process.env.CLAUDE_MOBILE_TMUX_SOCKET || null });
   const status = new StatusStore({ file: paths.links });
   const push = new PushService({ vapidFile: paths.vapid, subsFile: paths.subscriptions });
   const viewers = new Viewers();
@@ -63,7 +63,12 @@ function serve() {
   });
   const port = getPort();
   app.server.listen(port, '127.0.0.1', () => console.log(`claude-mobile слушает http://127.0.0.1:${port}`));
-  const stop = () => app.server.close(() => process.exit(0));
+  const stop = () => {
+    // Open WebSockets (a phone with a terminal or chat attached) would otherwise make
+    // app.close() wait indefinitely; a 3s fallback guarantees the process still exits.
+    setTimeout(() => process.exit(0), 3000).unref();
+    app.close(() => process.exit(0));
+  };
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);
 }
@@ -82,7 +87,11 @@ async function setPin() {
   }
   fs.mkdirSync(paths.base, { recursive: true, mode: 0o700 });
   fs.writeFileSync(paths.pin, hash, { mode: 0o600 });
-  console.log('PIN сохранён. Если сервис уже запущен: systemctl --user restart claude-mobile');
+  // Rotate the cookie-signing secret so every previously issued login cookie stops verifying:
+  // changing the PIN logs out all devices, not just ones that log in again with the new PIN.
+  rotateSecret(paths.cookieSecret);
+  console.log('PIN сохранён. Все устройства разлогинены.');
+  console.log('Если сервис уже запущен: systemctl --user restart claude-mobile');
 }
 
 function doInstallHooks() {

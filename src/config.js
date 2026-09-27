@@ -43,10 +43,16 @@ function getOrCreateSecret(file) {
     const existing = fs.readFileSync(file, 'utf8').trim();
     if (existing.length >= 32) return existing;
   } catch {}
+  return rotateSecret(file);
+}
+
+// Always writes a fresh secret, even if one already exists. Used by `set-pin` so that
+// changing the PIN invalidates every previously issued cookie (logs out all devices).
+function rotateSecret(file) {
   const secret = crypto.randomBytes(32).toString('hex');
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   fs.writeFileSync(file, secret, { mode: 0o600 });
   return secret;
 }
 
-module.exports = { getPaths, getPort, readJson, writeJson, getOrCreateSecret };
+module.exports = { getPaths, getPort, readJson, writeJson, getOrCreateSecret, rotateSecret };

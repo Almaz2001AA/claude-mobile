@@ -29,7 +29,7 @@ test.before(async () => {
   fs.writeFileSync(path.join(publicDir, 'index.html'), '<title>Claude</title>');
   fs.writeFileSync(path.join(dir, 'xterm.css'), '.xterm{}');
   sessions = new SessionManager({ socket, claudeCmd: 'cat' });
-  status = new StatusStore({ file: path.join(dir, 'links.json') });
+  status = new StatusStore({ file: path.join(dir, 'links.json'), projectsRoot: dir });
   const sender = { generateVAPIDKeys: () => ({ publicKey: 'PUB', privateKey: 'PRIV' }), setVapidDetails() {}, async sendNotification() {} };
   app = createApp({
     sessions,
@@ -49,7 +49,7 @@ test.before(async () => {
 });
 
 test.after(() => {
-  app.server.close();
+  app.close();
   killTmuxServer(socket);
 });
 
@@ -76,6 +76,24 @@ test('API requires login; wrong PIN is 401; right PIN sets a secure cookie', asy
   assert.match(setCookie, /^cm_auth=\d+\.[0-9a-f]+; HttpOnly; Secure; SameSite=Strict; Path=\/; Max-Age=2592000$/);
   cookie = setCookie.split(';')[0];
   assert.deepEqual(await (await call('GET', '/api/me')).json(), { ok: true });
+});
+
+test('state-changing /api requests need a matching Origin when one is sent, but a missing Origin is allowed', async () => {
+  const noOrigin = await fetch(`${base}/api/login`, { method: 'POST', body: JSON.stringify({ pin: '0000' }) });
+  assert.notEqual(noOrigin.status, 403, 'no Origin header at all (curl, tests) is allowed through');
+
+  const sameOrigin = await fetch(`${base}/api/login`, { method: 'POST', headers: { origin: base }, body: JSON.stringify({ pin: '0000' }) });
+  assert.notEqual(sameOrigin.status, 403);
+
+  const foreign = await fetch(`${base}/api/login`, { method: 'POST', headers: { origin: 'https://evil.example' }, body: JSON.stringify({ pin: '1234' }) });
+  assert.equal(foreign.status, 403);
+
+  // A GET is not state-changing, so a foreign Origin doesn't matter there.
+  const getForeign = await fetch(`${base}/api/me`, { headers: { cookie, origin: 'https://evil.example' } });
+  assert.notEqual(getForeign.status, 403);
+
+  const foreignDelete = await call('DELETE', '/api/sessions/nope', undefined, { origin: 'https://evil.example' });
+  assert.equal(foreignDelete.status, 403);
 });
 
 test('create, list, type into and delete a session', async () => {
@@ -154,4 +172,52 @@ test('WebSockets require the cookie and a same-origin Origin', async () => {
   const code = await new Promise((resolve) => missing.ws.on('close', resolve));
   assert.equal(code, 4004);
   await sessions.kill('wstest');
+});
+
+test('deleting a session closes any open chat WebSocket for it', async () => {
+  await sessions.create('todelete', tmpDir());
+  const chat = openWs('/ws/chat/todelete', { cookie, origin: base });
+  await waitFor(() => chat.messages.some((m) => JSON.parse(m).type === 'history'));
+  const closed = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('chat WS was not closed within 2s of deleting its session')), 2000);
+    chat.ws.on('close', (code) => {
+      clearTimeout(timer);
+      resolve(code);
+    });
+  });
+  assert.equal((await call('DELETE', '/api/sessions/todelete')).status, 200);
+  assert.equal(await closed, 4004);
+});
+
+test('GET /api/sessions reports waiting_permission sessions as idle once the dialog is gone from the screen', async () => {
+  const dialogSessions = new SessionManager({
+    socket,
+    // read -n1 consumes exactly the one key the "answer" sends below (no Enter needed),
+    // then `clear` wipes the dialog off the visible screen, like Claude Code redrawing
+    // after an answer — a plain `cat` would leave the dialog text sitting in the pane forever.
+    claudeCmd: "printf 'Do you want to proceed?\\n\\u276f 1. Yes\\n  2. No\\n'; read -n1 x; clear; cat",
+  });
+  await dialogSessions.create('dialogsess', tmpDir());
+  await waitFor(async () => (await dialogSessions.capture('dialogsess')).includes('2. No'));
+  status.applyHook('claude-dialogsess', { hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'needs permission' });
+  assert.equal(status.get('dialogsess').status, 'waiting_permission');
+
+  let list = await (await call('GET', '/api/sessions')).json();
+  let entry = list.find((s) => s.name === 'dialogsess');
+  assert.equal(entry.status, 'waiting_permission', 'the dialog is really on screen');
+  // The store itself must not have been touched by just reporting it.
+  assert.equal(status.get('dialogsess').status, 'waiting_permission');
+
+  // Answer it directly on the tmux pane (as if from the terminal, bypassing our API) so the
+  // store is left stale at waiting_permission while the screen has moved on.
+  await dialogSessions.tmux(['send-keys', '-t', dialogSessions.target('dialogsess'), '1']);
+  await waitFor(async () => !(await dialogSessions.capture('dialogsess')).includes('Do you want to'));
+
+  list = await (await call('GET', '/api/sessions')).json();
+  entry = list.find((s) => s.name === 'dialogsess');
+  assert.equal(entry.status, 'idle', 'no dialog on screen any more, so the API reports idle');
+  assert.equal(entry.message, null);
+  assert.equal(status.get('dialogsess').status, 'waiting_permission', 'the store itself is left untouched');
+
+  await dialogSessions.kill('dialogsess');
 });

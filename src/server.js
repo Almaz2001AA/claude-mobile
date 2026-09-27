@@ -18,7 +18,7 @@ const WS_PATH_RE = /^\/ws\/(term|chat)\/([a-z0-9-]{1,32})$/;
 const authCookie = (value, maxAge) => `${COOKIE}=${value}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${maxAge}`;
 
 function createApp(deps) {
-  const { sessions, input, status, auth, push, viewers, recent, paths, hookSecret, publicDir, vendorFiles = {}, allowedOrigin = null } = deps;
+  const { sessions, input, status, auth, push, viewers, recent, paths, hookSecret, publicDir, vendorFiles = {}, allowedOrigin = null, heartbeatIntervalMs = 30000 } = deps;
   const routes = [];
   const on = (method, pattern, handler, { open = false } = {}) => routes.push({ method, pattern, handler, open });
   const isAuthed = (req) => auth.verify(parseCookies(req.headers.cookie)[COOKIE]);
@@ -41,10 +41,29 @@ function createApp(deps) {
 
   on('GET', /^\/api\/sessions$/, async (req, res) => {
     const list = await sessions.list();
-    sendJson(res, 200, list.map((s) => {
+    const result = await Promise.all(list.map(async (s) => {
       const st = status.get(s.name);
-      return { ...s, status: st.status, message: st.message || null, hasTranscript: Boolean(st.transcriptPath) };
+      let statusValue = st.status;
+      let message = st.message || null;
+      if (statusValue === 'waiting_permission') {
+        // The store can go stale: the user may have answered/dismissed the dialog (or
+        // interrupted Claude) straight from the terminal, without going through our own
+        // answerPermission endpoint. Re-check the live screen rather than trusting the
+        // last hook event, but don't write the correction back — the hook is still the
+        // source of truth and may legitimately flip this back to waiting shortly after.
+        try {
+          const dialog = await input.readPermission(s.name);
+          if (!dialog) {
+            statusValue = 'idle';
+            message = null;
+          }
+        } catch {
+          // Can't tell right now (tmux hiccup): report the last known status unchanged.
+        }
+      }
+      return { ...s, status: statusValue, message, hasTranscript: Boolean(st.transcriptPath) };
     }));
+    sendJson(res, 200, result);
   });
 
   on('POST', /^\/api\/sessions$/, async (req, res) => {
@@ -58,6 +77,10 @@ function createApp(deps) {
   on('DELETE', /^\/api\/sessions\/(?<name>[^/]+)$/, async (req, res, p) => {
     await sessions.kill(p.name);
     status.remove(p.name);
+    // The terminal WS learns the session is gone from its pty exiting; a chat WS has no
+    // such signal on its own, so it would otherwise sit open forever believing the (now
+    // deleted) session still exists.
+    viewers.closeSession(p.name, 4004, 'Сессия завершена');
     ok(res);
   });
 
@@ -135,6 +158,13 @@ function createApp(deps) {
         if (route.method !== req.method) continue;
         const match = url.pathname.match(route.pattern);
         if (!match) continue;
+        // CSRF guard for anything that changes state, login included: a cross-site page
+        // can still make a simple GET, but a browser always attaches Origin to a state-
+        // changing fetch/XHR, so a mismatched one is decisive. Requests without an Origin
+        // header at all (curl, server-to-server, tests) are allowed through.
+        if (req.method !== 'GET' && url.pathname.startsWith('/api/') && !originOkForHttp(req)) {
+          return sendJson(res, 403, { error: 'Недопустимый Origin' });
+        }
         if (!route.open && !isAuthed(req)) return sendJson(res, 401, { error: 'Нужен вход' });
         return await route.handler(req, res, match.groups || {}, url);
       }
@@ -159,9 +189,8 @@ function createApp(deps) {
     }
   }
 
-  function originAllowed(req) {
+  function originMatches(req) {
     const origin = req.headers.origin;
-    if (!origin) return false;
     if (allowedOrigin) return origin === allowedOrigin;
     try {
       return new URL(origin).host === (req.headers['x-forwarded-host'] || req.headers.host);
@@ -170,37 +199,87 @@ function createApp(deps) {
     }
   }
 
+  // WebSocket upgrades come from a browser, which always sends Origin: require it, and require it to match.
+  function originAllowed(req) {
+    return Boolean(req.headers.origin) && originMatches(req);
+  }
+
+  // Plain HTTP requests (curl, server-to-server calls, tests) often carry no Origin header
+  // at all; only reject when one is present and it doesn't match.
+  function originOkForHttp(req) {
+    return !req.headers.origin || originMatches(req);
+  }
+
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
 
-  async function handleUpgrade(req, socket, head) {
-    const url = new URL(req.url, 'http://localhost');
-    const match = url.pathname.match(WS_PATH_RE);
-    if (!match || !isAuthed(req) || !originAllowed(req)) {
-      socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
-      socket.destroy();
-      return;
-    }
-    const [, kind, name] = match;
-    // Resolve existence *before* completing the handshake: once the client sees the
-    // connection open it may send a message immediately, and if that await happened
-    // inside the handleUpgrade callback the first message could arrive before
-    // attachTerminal/attachChat had a chance to register its 'message' listener.
-    const exists = await sessions.exists(name);
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      if (!exists) return ws.close(4004, 'Сессия не найдена');
-      if (kind === 'term') {
-        const cols = clampInt(url.searchParams.get('cols'), 20, 400, 80);
-        const rows = clampInt(url.searchParams.get('rows'), 5, 200, 24);
-        attachTerminal(ws, { sessions, name, cols, rows });
-      } else {
-        attachChat(ws, { name, status, viewers });
+  // Every 30s, drop any WS that hasn't answered the previous ping: a phone that lost its
+  // network without a clean close otherwise leaves its `tmux attach` pty and chat tail
+  // running forever. Interval is injectable so tests don't have to wait 30s.
+  let heartbeatTimer = null;
+  if (heartbeatIntervalMs > 0) {
+    heartbeatTimer = setInterval(() => {
+      for (const ws of wss.clients) {
+        if (ws.isAlive === false) {
+          ws.terminate();
+          continue;
+        }
+        ws.isAlive = false;
+        ws.ping();
       }
-    });
+    }, heartbeatIntervalMs);
+    heartbeatTimer.unref();
+  }
+
+  async function handleUpgrade(req, socket, head) {
+    // A client RST (or any other socket-level error) while we're still awaiting below must
+    // not become an unhandled 'error' event and crash the process.
+    socket.on('error', () => socket.destroy());
+    try {
+      const url = new URL(req.url, 'http://localhost');
+      const match = url.pathname.match(WS_PATH_RE);
+      if (!match || !isAuthed(req) || !originAllowed(req)) {
+        socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+      const [, kind, name] = match;
+      // Resolve existence *before* completing the handshake: once the client sees the
+      // connection open it may send a message immediately, and if that await happened
+      // inside the handleUpgrade callback the first message could arrive before
+      // attachTerminal/attachChat had a chance to register its 'message' listener.
+      const exists = await sessions.exists(name);
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        ws.isAlive = true;
+        ws.on('pong', () => { ws.isAlive = true; });
+        if (!exists) return ws.close(4004, 'Сессия не найдена');
+        if (kind === 'term') {
+          const cols = clampInt(url.searchParams.get('cols'), 20, 400, 80);
+          const rows = clampInt(url.searchParams.get('rows'), 5, 200, 24);
+          attachTerminal(ws, { sessions, name, cols, rows });
+        } else {
+          attachChat(ws, { name, status, viewers });
+        }
+      });
+    } catch (err) {
+      console.error(err);
+      try { socket.destroy(); } catch {}
+    }
   }
 
   const server = http.createServer(handle);
   server.on('upgrade', handleUpgrade);
-  return { server, handle };
+
+  // Graceful shutdown: without forcing already-open WebSockets and keep-alive sockets
+  // closed, server.close() waits for them to disconnect on their own, which can hang
+  // indefinitely with a phone attached.
+  function close(cb) {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    for (const ws of wss.clients) ws.terminate();
+    if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+    server.close(cb);
+  }
+
+  return { server, handle, wss, close };
 }
 
 module.exports = { createApp };

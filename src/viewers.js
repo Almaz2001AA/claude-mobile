@@ -24,6 +24,15 @@ class Viewers {
     }
     return endpoints;
   }
+
+  // Closes every chat WebSocket registered for `name`, e.g. once its session has been
+  // deleted: without this, an already-open chat never learns the session is gone (unlike
+  // the terminal WS, which finds out from the pty exiting).
+  closeSession(name, code, reason) {
+    for (const [ws, v] of this.map) {
+      if (v.name === name) ws.close(code, reason);
+    }
+  }
 }
 
 module.exports = { Viewers };

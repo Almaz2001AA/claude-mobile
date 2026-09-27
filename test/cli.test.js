@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync, spawn } = require('node:child_process');
 const { verifyPin } = require('../src/auth');
-const { tmpDir, waitFor } = require('./helpers');
+const { tmpDir, waitFor, killTmuxServer } = require('./helpers');
 
 const CLI = path.resolve(__dirname, '..', 'bin', 'claude-mobile.js');
 const run = (args, { env = {}, input } = {}) => spawnSync(process.execPath, [CLI, ...args], {
@@ -17,6 +17,25 @@ test('set-pin stores a hash; invalid PINs are refused', () => {
   assert.equal(res.status, 0, res.stderr);
   assert.equal(verifyPin('2468', fs.readFileSync(path.join(home, 'pin'), 'utf8').trim()), true);
   assert.notEqual(run(['set-pin'], { env: { CLAUDE_MOBILE_HOME: home }, input: 'ab\n' }).status, 0);
+});
+
+test('set-pin rotates the cookie secret so it logs out all devices, and says so', () => {
+  const home = tmpDir();
+  const first = run(['set-pin'], { env: { CLAUDE_MOBILE_HOME: home }, input: '2468\n' });
+  assert.equal(first.status, 0, first.stderr);
+  assert.match(first.stdout, /разлогинен/i);
+  const secret1 = fs.readFileSync(path.join(home, 'cookie-secret'), 'utf8').trim();
+  assert.match(secret1, /^[0-9a-f]{64}$/);
+
+  const second = run(['set-pin'], { env: { CLAUDE_MOBILE_HOME: home }, input: '1357\n' });
+  assert.equal(second.status, 0, second.stderr);
+  const secret2 = fs.readFileSync(path.join(home, 'cookie-secret'), 'utf8').trim();
+  assert.notEqual(secret2, secret1, 'a new PIN gets a fresh cookie secret');
+
+  // An invalid PIN must not rotate the secret out from under working sessions.
+  const bad = run(['set-pin'], { env: { CLAUDE_MOBILE_HOME: home }, input: 'ab\n' });
+  assert.notEqual(bad.status, 0);
+  assert.equal(fs.readFileSync(path.join(home, 'cookie-secret'), 'utf8').trim(), secret2);
 });
 
 test('install-hooks writes hooks into the given settings file', () => {
@@ -39,12 +58,17 @@ test('serve starts and answers on the configured port', async () => {
   const home = tmpDir();
   run(['set-pin'], { env: { CLAUDE_MOBILE_HOME: home }, input: '2468\n' });
   const port = 20000 + (process.pid % 20000);
-  const child = spawn(process.execPath, [CLI, 'serve'], { env: { ...process.env, CLAUDE_MOBILE_HOME: home, CLAUDE_MOBILE_PORT: String(port) } });
+  // A private tmux socket keeps this test off the user's real (default) tmux server.
+  const tmuxSocket = `cm-test-${process.pid}-cli-serve`;
+  const child = spawn(process.execPath, [CLI, 'serve'], {
+    env: { ...process.env, CLAUDE_MOBILE_HOME: home, CLAUDE_MOBILE_PORT: String(port), CLAUDE_MOBILE_TMUX_SOCKET: tmuxSocket },
+  });
   try {
     const res = await waitFor(() => fetch(`http://127.0.0.1:${port}/api/me`).catch(() => null), { timeoutMs: 5000 });
     assert.equal(res.status, 401);
   } finally {
     child.kill();
+    killTmuxServer(tmuxSocket);
   }
 });
 
