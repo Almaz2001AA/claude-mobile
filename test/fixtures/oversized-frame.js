@@ -24,7 +24,10 @@ app.server.listen(0, '127.0.0.1', () => {
   setTimeout(async () => {
     try {
       const res = await fetch(`http://127.0.0.1:${port}/api/me`);
-      console.log('http status after oversized frame:', res.status);
+      // A template string (not a second console.log() argument) so a colorized-number
+      // formatter (e.g. FORCE_COLOR in the parent's env) can never wrap the status digits in
+      // ANSI codes and break the exact string match this fixture's caller does on it.
+      console.log(`http status after oversized frame: ${res.status}`);
       console.log('still alive after oversized frame');
     } catch (err) {
       console.error('fetch failed after oversized frame:', err);

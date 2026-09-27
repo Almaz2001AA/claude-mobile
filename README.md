@@ -63,3 +63,120 @@ function cc { ssh -t user@<server> "~/.local/bin/cc $args" }
 Замените `<server>` на адрес сервера (например, Tailscale-имя машины).
 После сохранения профиля откройте новое окно PowerShell — и `cc`, `cc ls`,
 `cc -n my-app` и т. д. будут работать так же, как на самом сервере.
+
+## Развёртывание
+
+Реально работает так: без root, без systemd (см. исключение в конце) —
+процесс пользователя, поднятый через cron, HTTPS через `tailscale serve`.
+
+### 1. tailscaled (userspace, rootless)
+
+```sh
+~/.local/bin/tailscaled --tun=userspace-networking \
+  --statedir=~/.local/share/tailscale \
+  --socket=~/.local/share/tailscale/tailscaled.sock \
+  --port=0
+```
+
+Запускается и поддерживается автоматически через `deploy/ensure-running.sh`
+(см. п. 4) — руками эту команду запускать не нужно.
+
+### 2. HTTPS — `tailscale serve`
+
+```sh
+~/.local/bin/tailscale --socket=~/.local/share/tailscale/tailscaled.sock \
+  serve --bg 8787
+```
+
+Проксирует `https://<имя-машины>.<tailnet>.ts.net` → `http://127.0.0.1:8787`
+(доступно только участникам вашего tailnet). Текущая конфигурация:
+`tailscale --socket=... serve status`.
+
+Альтернатива TCP — Unix-сокет, чтобы порт 8787 не был виден вообще никому
+локально, кроме самого процесса (полезно, если на машине есть другие
+локальные пользователи; см. `CLAUDE_MOBILE_LISTEN` в п. 3). Установленная
+версия tailscale (1.102.4) это поддерживает:
+
+```sh
+tailscale --socket=~/.local/share/tailscale/tailscaled.sock \
+  serve --bg unix:$HOME/.local/state/claude-mobile/http.sock
+```
+
+(`tailscale serve --help` перечисляет `unix:/path/to.sock` как допустимую
+цель наравне с портом/URL.)
+
+### 3. `~/.config/claude-mobile/env`
+
+Простой файл вида `KEY=VALUE`, по одной переменной на строку, без кавычек
+и `export`. Читается `deploy/ensure-running.sh` при каждом запуске (и
+пробрасывается в процесс claude-mobile), а также `hooks/notify.js` — но
+только ради `CLAUDE_MOBILE_LISTEN`/`CLAUDE_MOBILE_PORT` (хук выполняется
+внутри сессии Claude, где остальных переменных claude-mobile нет).
+
+```
+CLAUDE_MOBILE_ORIGIN=https://<имя-машины>.<tailnet>.ts.net
+# опционально, см. п. 2: слушать unix-сокет вместо 127.0.0.1:8787
+# CLAUDE_MOBILE_LISTEN=unix:/home/user/.local/state/claude-mobile/http.sock
+```
+
+`CLAUDE_MOBILE_ORIGIN` обязателен при работе через прокси: без него сервер
+сверяет заголовок `Origin` с `Host`/`X-Forwarded-Host` запроса, а за
+`tailscale serve` они не совпадают с тем, что видит браузер.
+
+### 4. Автозапуск и watchdog — crontab
+
+```
+@reboot /home/user/claude-mobile/deploy/ensure-running.sh
+*/5 * * * * /home/user/claude-mobile/deploy/ensure-running.sh
+```
+
+`deploy/ensure-running.sh` (POSIX `sh`, идемпотентен):
+
+- поднимает `tailscaled`, если он ещё не запущён;
+- запускает claude-mobile внутри цикла перезапуска
+  (`while :; do node ...; sleep 2; done` под `setsid`), поэтому падение
+  процесса чинится за пару секунд, а не ждёт следующего cron-тика (до 5 минут);
+- не даёт двум запускам скрипта или двум циклам перезапуска работать
+  параллельно — через `flock -n` на лок-файлах в `~/.local/state/claude-mobile/`;
+- узнаёт, что claude-mobile уже запущен, по пути до самого приложения
+  (`.../bin/claude-mobile.js serve`), а не по конкретному пути до `node` —
+  тот меняется при обновлении nvm и с хардкодом однажды приводил бы к
+  повторному (падающему на EADDRINUSE) запуску;
+- пробрасывает `CLAUDE_MOBILE_LISTEN` и остальные переменные из
+  `~/.config/claude-mobile/env` в процесс claude-mobile;
+- делает простую ротацию логов: если лог больше 5 МБ, переносит его в
+  `<файл>.1` (одно поколение, без сжатия) перед следующим запуском.
+
+Логи: `~/.local/state/claude-mobile/tailscaled.log` и
+`~/.local/state/claude-mobile/claude-mobile.log`.
+
+Хотите перезапустить сервис руками — не убивайте `node` напрямую (watchdog
+его тут же поднимет обратно, но без вашего PIN-файла запуск не пройдёт):
+```sh
+pkill -f 'claude-mobile.js serve'
+deploy/ensure-running.sh   # поднимет заново в течение секунд
+```
+
+На хосте с включённым `loginctl enable-linger` (пользовательские сервисы
+переживают выход из системы) вместо cron-скрипта можно использовать
+готовый systemd user-unit `deploy/claude-mobile.service`
+(`systemctl --user enable --now claude-mobile`) — это альтернатива, а не то,
+что реально запущено на этом сервере: unit не поднимает `tailscaled` и не
+делает watchdog-цикл, только `Restart=on-failure`.
+
+### 5. Смена PIN
+
+```sh
+node bin/claude-mobile.js set-pin   # 6–8 цифр
+```
+
+Перезапускать сервис не нужно: работающий процесс сам подхватывает новый
+PIN-хэш и новый cookie-secret (дешёвая проверка `mtime` файлов при каждом
+входе/проверке куки) — это разлогинивает все устройства сразу.
+
+### 6. iPhone
+
+Телефон должен быть участником того же tailnet. Откройте в Safari
+`https://<имя-машины>.<tailnet>.ts.net`, войдите по PIN, затем
+«Поделиться» → «На экран "Домой"» — только так PWA получает push-уведомления
+и полноэкранный режим без адресной строки Safari.
