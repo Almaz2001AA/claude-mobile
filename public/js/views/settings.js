@@ -94,6 +94,32 @@ export function renderSettings(root) {
     }
   }
 
+  const favList = h('div', { class: 'item-list' });
+
+  async function loadFavorites() {
+    try {
+      renderFavorites(await api('GET', '/api/favorites'));
+    } catch (err) {
+      toast(err.message);
+    }
+  }
+
+  function renderFavorites(items) {
+    favList.replaceChildren(...(items.length ? items.map((fav) => h('div', { class: 'item-row' },
+      h('div', { class: 'item-info' },
+        h('div', { class: 'item-label' }, fav.name),
+        h('div', { class: 'item-text' }, fav.cwd)),
+      h('button', { class: 'danger', onclick: () => deleteFavorite(items, fav.name) }, 'Удалить'))) : [h('p', { class: 'hint' }, 'Нет избранных папок')]));
+  }
+
+  async function deleteFavorite(items, name) {
+    try {
+      renderFavorites(await api('PUT', '/api/favorites', { items: items.filter((f) => f.name !== name) }));
+    } catch (err) {
+      toast(err.message);
+    }
+  }
+
   async function refreshState() {
     if (!pushSupported()) {
       state.textContent = isStandalone()
@@ -127,6 +153,8 @@ export function renderSettings(root) {
         quickTextInput,
         h('button', { onclick: addQuickCmd }, 'Добавить')),
       h('button', { class: 'wide', onclick: resetQuick }, 'Сбросить по умолчанию'),
+      h('h2', {}, 'Избранные папки'),
+      favList,
       h('button', {
         class: 'danger wide',
         onclick: async () => {
@@ -137,4 +165,5 @@ export function renderSettings(root) {
 
   refreshState();
   loadQuick();
+  loadFavorites();
 }

@@ -46,13 +46,38 @@ function enableSwipe(wrap, card) {
 
 export function renderSessions(root) {
   const list = h('div', { class: 'session-list' });
+  const favoritesSection = h('div', { class: 'favorites-section', hidden: true });
+  const favoritesChips = h('div', { class: 'favorites-chips' });
   let stopped = false;
+
+  favoritesSection.append(h('h2', {}, 'Избранное'), favoritesChips);
 
   root.append(h('div', { class: 'screen' },
     h('header', { class: 'bar' },
       h('h1', {}, 'Сессии'),
       h('a', { class: 'icon-btn', href: '#/settings', 'aria-label': 'Настройки' }, '⚙️')),
-    h('div', { class: 'scroll' }, list, h('button', { class: 'primary wide', onclick: openCreate }, '+ Новая сессия'))));
+    h('div', { class: 'scroll' }, favoritesSection, list, h('button', { class: 'primary wide', onclick: openCreate }, '+ Новая сессия'))));
+
+  async function refreshFavorites() {
+    try {
+      const favorites = await api('GET', '/api/favorites');
+      if (stopped) return;
+      favoritesSection.hidden = favorites.length === 0;
+      favoritesChips.replaceChildren(...favorites.map((fav) => h('button', {
+        class: 'chip',
+        onclick: async () => {
+          try {
+            await api('POST', `/api/favorites/${fav.name}/open`);
+            location.hash = `#/s/${fav.name}/chat`;
+          } catch (err) {
+            toast(err.message);
+          }
+        },
+      }, fav.name)));
+    } catch (err) {
+      if (err.status !== 401) toast(err.message);
+    }
+  }
 
   async function refresh() {
     try {
@@ -87,12 +112,24 @@ export function renderSessions(root) {
     return wrap;
   }
 
+  async function addFavorite(name, cwd) {
+    try {
+      const favorites = await api('GET', '/api/favorites');
+      if (favorites.some((f) => f.name === name)) return;
+      await api('PUT', '/api/favorites', { items: [...favorites, { name, cwd }] });
+      refreshFavorites();
+    } catch (err) {
+      toast(err.message);
+    }
+  }
+
   function openCreate() {
     const noAuto = { autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false' };
     const nameInput = h('input', { placeholder: 'my-app', ...noAuto });
     const cwdInput = h('input', { placeholder: '/home/user/projects/…', ...noAuto });
     const chips = h('div', { class: 'chips' });
     const resumeInput = h('input', { type: 'checkbox' });
+    const favoriteInput = h('input', { type: 'checkbox' });
     const error = h('p', { class: 'error' });
     const dialog = h('dialog', { class: 'sheet' },
       h('form', {
@@ -100,13 +137,16 @@ export function renderSessions(root) {
           e.preventDefault();
           error.textContent = '';
           const name = nameInput.value.trim();
+          const cwd = cwdInput.value.trim();
           try {
-            await api('POST', '/api/sessions', { name, cwd: cwdInput.value.trim(), resume: resumeInput.checked });
-            dialog.close();
-            location.hash = `#/s/${name}/chat`;
+            await api('POST', '/api/sessions', { name, cwd, resume: resumeInput.checked });
           } catch (err) {
             error.textContent = err.message;
+            return;
           }
+          if (favoriteInput.checked) await addFavorite(name, cwd);
+          dialog.close();
+          location.hash = `#/s/${name}/chat`;
         },
       },
       h('h2', {}, 'Новая сессия'),
@@ -114,6 +154,7 @@ export function renderSessions(root) {
       h('label', {}, 'Папка', cwdInput),
       chips,
       h('label', { class: 'check' }, resumeInput, 'Продолжить последний разговор в этой папке'),
+      h('label', { class: 'check' }, favoriteInput, 'Добавить в избранное'),
       error,
       h('div', { class: 'row' },
         h('button', { type: 'button', onclick: () => dialog.close() }, 'Отмена'),
@@ -137,6 +178,7 @@ export function renderSessions(root) {
   document.addEventListener('visibilitychange', onVisible);
   const timer = setInterval(refresh, 3000);
   refresh();
+  refreshFavorites();
 
   return () => {
     stopped = true;

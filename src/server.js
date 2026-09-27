@@ -18,7 +18,7 @@ const WS_PATH_RE = /^\/ws\/(term|chat)\/([a-z0-9-]{1,32})$/;
 const authCookie = (value, maxAge) => `${COOKIE}=${value}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${maxAge}`;
 
 function createApp(deps) {
-  const { sessions, input, status, auth, push, viewers, recent, quick, paths, hookSecret, publicDir, vendorFiles = {}, allowedOrigin = null, heartbeatIntervalMs = 30000 } = deps;
+  const { sessions, input, status, auth, push, viewers, recent, quick, favorites, paths, hookSecret, publicDir, vendorFiles = {}, allowedOrigin = null, heartbeatIntervalMs = 30000 } = deps;
   const routes = [];
   const on = (method, pattern, handler, { open = false } = {}) => routes.push({ method, pattern, handler, open });
   const isAuthed = (req) => auth.verify(parseCookies(req.headers.cookie)[COOKIE]);
@@ -91,6 +91,24 @@ function createApp(deps) {
   on('PUT', /^\/api\/quick$/, async (req, res) => {
     const { items, reset } = await readJsonBody(req);
     sendJson(res, 200, reset === true ? quick.reset() : quick.save(items));
+  });
+
+  on('GET', /^\/api\/favorites$/, (req, res) => sendJson(res, 200, favorites.list()));
+
+  on('PUT', /^\/api\/favorites$/, async (req, res) => {
+    const { items } = await readJsonBody(req);
+    sendJson(res, 200, favorites.save(items));
+  });
+
+  on('POST', /^\/api\/favorites\/(?<name>[^/]+)\/open$/, async (req, res, p) => {
+    const name = validateName(p.name);
+    const fav = favorites.get(name);
+    if (!fav) throw new UserError('Избранное не найдено', 404);
+    if (await sessions.exists(name)) return sendJson(res, 200, { name, created: false });
+    await sessions.create(name, fav.cwd, { resume: true });
+    status.remove(name);
+    recent.add(fav.cwd);
+    sendJson(res, 200, { name, created: true });
   });
 
   on('GET', /^\/api\/sessions\/(?<name>[^/]+)\/history$/, async (req, res, p, url) => {

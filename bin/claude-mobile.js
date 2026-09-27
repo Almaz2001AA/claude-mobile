@@ -14,6 +14,7 @@ const { PushService } = require('../src/push');
 const { Viewers } = require('../src/viewers');
 const { Recent } = require('../src/recent');
 const { QuickCommands } = require('../src/quick');
+const { Favorites } = require('../src/favorites');
 const { wireNotifications } = require('../src/notifier');
 const { createApp } = require('../src/server');
 
@@ -57,6 +58,7 @@ function serve() {
     viewers,
     recent: new Recent(paths.recent),
     quick: new QuickCommands(paths.quick),
+    favorites: new Favorites(paths.favorites),
     paths,
     hookSecret: getOrCreateSecret(paths.hookSecret),
     publicDir: path.join(ROOT, 'public'),

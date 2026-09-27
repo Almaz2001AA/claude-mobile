@@ -12,6 +12,7 @@ const { PushService } = require('../src/push');
 const { Viewers } = require('../src/viewers');
 const { Recent } = require('../src/recent');
 const { QuickCommands } = require('../src/quick');
+const { Favorites } = require('../src/favorites');
 const { tmpDir, waitFor, killTmuxServer } = require('./helpers');
 
 const socket = `cm-test-${process.pid}-server`;
@@ -41,6 +42,7 @@ test.before(async () => {
     viewers: new Viewers(),
     recent: new Recent(path.join(dir, 'recent.json')),
     quick: new QuickCommands(path.join(dir, 'quick.json')),
+    favorites: new Favorites(path.join(dir, 'favorites.json')),
     paths: { uploads: path.join(dir, 'uploads') },
     hookSecret: SECRET,
     publicDir,
@@ -130,6 +132,56 @@ test('quick commands: defaults, save, validation and reset', async () => {
 
   const reset = await (await call('PUT', '/api/quick', { reset: true })).json();
   assert.deepEqual(reset, defaults);
+});
+
+test('favorites: save, validation, open creates a resumed session, and open of a running one does not recreate it', async () => {
+  const cwd = tmpDir();
+  assert.equal((await call('POST', '/api/favorites/fav1/open')).status, 404);
+
+  const saved = await (await call('PUT', '/api/favorites', { items: [{ name: 'fav1', cwd }] })).json();
+  assert.deepEqual(saved, [{ name: 'fav1', cwd }]);
+  assert.deepEqual(await (await call('GET', '/api/favorites')).json(), saved);
+
+  assert.equal((await call('PUT', '/api/favorites', { items: [{ name: 'Bad Name', cwd }] })).status, 400);
+  assert.equal((await call('PUT', '/api/favorites', { items: [{ name: 'fav1', cwd: '/nope/not/here' }] })).status, 400);
+
+  // `cat` (the shared test claudeCmd) doesn't understand --continue, which sessions.create
+  // appends for resume:true, so open() here uses its own SessionManager whose command
+  // tolerates (and ignores) a trailing argument, keeping the pane alive to observe.
+  const resumeSessions = new SessionManager({ socket, claudeCmd: "sh -c 'cat' x" });
+  const favApp = createApp({
+    sessions: resumeSessions,
+    input: new InputSender({ sessions: resumeSessions, enterDelayMs: 20 }),
+    status,
+    auth: new Auth({ pinHash: hashPin('1234'), secret: 'c'.repeat(64) }),
+    push: new PushService({ vapidFile: path.join(dir, 'vapid3.json'), subsFile: path.join(dir, 'subs3.json'), sender: { generateVAPIDKeys: () => ({ publicKey: 'PUB', privateKey: 'PRIV' }), setVapidDetails() {}, async sendNotification() {} } }),
+    viewers: new Viewers(),
+    recent: new Recent(path.join(dir, 'recent3.json')),
+    quick: new QuickCommands(path.join(dir, 'quick3.json')),
+    favorites: new Favorites(path.join(dir, 'favorites3.json')),
+    paths: { uploads: path.join(dir, 'uploads3') },
+    hookSecret: SECRET,
+    publicDir: path.join(dir, 'public'),
+    vendorFiles: { 'xterm.css': path.join(dir, 'xterm.css') },
+  });
+  await new Promise((resolve) => favApp.server.listen(0, '127.0.0.1', resolve));
+  const favBase = `http://127.0.0.1:${favApp.server.address().port}`;
+  const favCall = (method, url, body) => fetch(`${favBase}${url}`, {
+    method,
+    headers: { cookie, ...(body !== undefined ? { 'content-type': 'application/json' } : {}) },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+
+  assert.deepEqual(await (await favCall('PUT', '/api/favorites', { items: [{ name: 'fav1', cwd }] })).json(), [{ name: 'fav1', cwd }]);
+  const opened = await (await favCall('POST', '/api/favorites/fav1/open')).json();
+  assert.deepEqual(opened, { name: 'fav1', created: true });
+  await waitFor(async () => (await resumeSessions.list()).some((s) => s.name === 'fav1'));
+
+  const openedAgain = await (await favCall('POST', '/api/favorites/fav1/open')).json();
+  assert.deepEqual(openedAgain, { name: 'fav1', created: false });
+
+  await resumeSessions.kill('fav1');
+  favApp.close();
 });
 
 test('POST /api/sessions with resume:true passes resume through to sessions.create', async () => {
