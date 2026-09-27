@@ -13,12 +13,12 @@ ENV_FILE="$HOME/.config/claude-mobile/env"
 export PATH="$HOME/.local/bin:$(dirname "$NODE"):/usr/local/bin:/usr/bin:/bin"
 mkdir -p "$TS_DIR" "$LOG_DIR"
 
-if ! pgrep -u "$(id -u)" -f "tailscaled --tun=userspace-networking" >/dev/null; then
+if ! pgrep -u "$(id -u)" -f "^[^ ]*tailscaled --tun=userspace-networking" >/dev/null; then
   setsid nohup tailscaled --tun=userspace-networking --statedir="$TS_DIR" --socket="$TS_SOCK" --port=0 \
     >>"$LOG_DIR/tailscaled.log" 2>&1 </dev/null &
 fi
 
-if ! pgrep -u "$(id -u)" -f "$APP_DIR/bin/claude-mobile.js serve" >/dev/null; then
+if ! pgrep -u "$(id -u)" -f "^$NODE $APP_DIR/bin/claude-mobile.js serve" >/dev/null; then
   if [ -f "$ENV_FILE" ]; then
     set -a
     . "$ENV_FILE"
