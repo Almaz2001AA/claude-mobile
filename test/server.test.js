@@ -115,6 +115,46 @@ test('create, list, type into and delete a session', async () => {
   assert.equal((await call('GET', '/api/sessions/ghost/permission')).status, 404);
 });
 
+test('POST /api/sessions with resume:true passes resume through to sessions.create', async () => {
+  const resumeSessions = new SessionManager({
+    socket,
+    claudeCmd: "sh -c 'echo ARGS:\"$*\"; cat' x",
+  });
+  const resumeApp = createApp({
+    sessions: resumeSessions,
+    input: new InputSender({ sessions: resumeSessions, enterDelayMs: 20 }),
+    status,
+    auth: new Auth({ pinHash: hashPin('1234'), secret: 'c'.repeat(64) }),
+    push: new PushService({ vapidFile: path.join(dir, 'vapid2.json'), subsFile: path.join(dir, 'subs2.json'), sender: { generateVAPIDKeys: () => ({ publicKey: 'PUB', privateKey: 'PRIV' }), setVapidDetails() {}, async sendNotification() {} } }),
+    viewers: new Viewers(),
+    recent: new Recent(path.join(dir, 'recent2.json')),
+    paths: { uploads: path.join(dir, 'uploads2') },
+    hookSecret: SECRET,
+    publicDir: path.join(dir, 'public'),
+    vendorFiles: { 'xterm.css': path.join(dir, 'xterm.css') },
+  });
+  await new Promise((resolve) => resumeApp.server.listen(0, '127.0.0.1', resolve));
+  const resumeBase = `http://127.0.0.1:${resumeApp.server.address().port}`;
+  const resumeCall = (method, url, body) => fetch(`${resumeBase}${url}`, {
+    method,
+    headers: { cookie, ...(body !== undefined ? { 'content-type': 'application/json' } : {}) },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+
+  const cwd = tmpDir();
+  assert.equal((await resumeCall('POST', '/api/sessions', { name: 'resumed', cwd, resume: true })).status, 201);
+  await waitFor(async () => (await resumeSessions.capture('resumed')).includes('--continue'));
+  assert.match(await resumeSessions.capture('resumed'), /ARGS:--continue/);
+
+  assert.equal((await resumeCall('POST', '/api/sessions', { name: 'noresume', cwd, resume: false })).status, 201);
+  await waitFor(async () => (await resumeSessions.capture('noresume')).includes('ARGS:'));
+  assert.doesNotMatch(await resumeSessions.capture('noresume'), /--continue/);
+
+  await resumeSessions.kill('resumed');
+  await resumeSessions.kill('noresume');
+  resumeApp.close();
+});
+
 test('hook endpoint needs the secret and a direct loopback call, then drives status and history', async () => {
   const transcript = path.join(dir, 'h.jsonl');
   fs.writeFileSync(transcript, JSON.stringify({ type: 'user', uuid: 'u1', message: { content: 'hi' } }) + '\n');

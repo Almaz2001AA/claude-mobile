@@ -67,8 +67,8 @@ function createApp(deps) {
   });
 
   on('POST', /^\/api\/sessions$/, async (req, res) => {
-    const { name, cwd } = await readJsonBody(req);
-    await sessions.create(name, cwd);
+    const { name, cwd, resume } = await readJsonBody(req);
+    await sessions.create(name, cwd, { resume: resume === true });
     status.remove(name);
     recent.add(cwd);
     sendJson(res, 201, { ok: true });

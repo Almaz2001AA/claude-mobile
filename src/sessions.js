@@ -76,14 +76,15 @@ class SessionManager {
     }
   }
 
-  async create(name, cwd) {
+  async create(name, cwd, { resume = false } = {}) {
     validateName(name);
     if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) throw new UserError('Укажите полный путь к папке');
     let stat = null;
     try { stat = fs.statSync(cwd); } catch {}
     if (!stat || !stat.isDirectory()) throw new UserError('Папка не найдена');
     if (await this.exists(name)) throw new UserError('Сессия с таким именем уже есть', 409);
-    await this.tmux(['new-session', '-d', '-s', `${PREFIX}${name}`, '-c', cwd, this.claudeCmd]);
+    const cmd = resume ? `${this.claudeCmd} --continue` : this.claudeCmd;
+    await this.tmux(['new-session', '-d', '-s', `${PREFIX}${name}`, '-c', cwd, cmd]);
   }
 
   async kill(name) {

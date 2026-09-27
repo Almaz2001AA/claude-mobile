@@ -69,6 +69,26 @@ test('list ignores claude- sessions whose remainder is not a valid name', async 
   await sessions.kill('mine2');
 });
 
+test('create with resume runs claudeCmd with --continue appended', async () => {
+  const resumeSessions = new SessionManager({
+    socket,
+    // sh -c 'echo ARGS:"$*"; cat' x -- the trailing "x" becomes $0, so "$*" only picks up
+    // whatever tmux appends after claudeCmd (i.e. --continue when resume is requested);
+    // `cat` keeps the pane alive after the echo so capture-pane can see the output.
+    claudeCmd: "sh -c 'echo ARGS:\"$*\"; cat' x",
+  });
+  const dir = tmpDir();
+  await resumeSessions.create('resumed', dir, { resume: true });
+  await waitFor(async () => (await resumeSessions.capture('resumed')).includes('--continue'));
+  assert.match(await resumeSessions.capture('resumed'), /ARGS:--continue/);
+  await resumeSessions.kill('resumed');
+
+  await resumeSessions.create('noresume', dir);
+  await waitFor(async () => (await resumeSessions.capture('noresume')).includes('ARGS:'));
+  assert.doesNotMatch(await resumeSessions.capture('noresume'), /--continue/);
+  await resumeSessions.kill('noresume');
+});
+
 test('tmux() does not crash when tmux exits without reading stdin', async () => {
   // No server is running for this socket name, so the tmux client exits immediately;
   // feeding it a large stdin payload used to throw an unhandled EPIPE from the write.

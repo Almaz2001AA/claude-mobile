@@ -92,6 +92,7 @@ export function renderSessions(root) {
     const nameInput = h('input', { placeholder: 'my-app', ...noAuto });
     const cwdInput = h('input', { placeholder: '/home/user/projects/…', ...noAuto });
     const chips = h('div', { class: 'chips' });
+    const resumeInput = h('input', { type: 'checkbox' });
     const error = h('p', { class: 'error' });
     const dialog = h('dialog', { class: 'sheet' },
       h('form', {
@@ -100,7 +101,7 @@ export function renderSessions(root) {
           error.textContent = '';
           const name = nameInput.value.trim();
           try {
-            await api('POST', '/api/sessions', { name, cwd: cwdInput.value.trim() });
+            await api('POST', '/api/sessions', { name, cwd: cwdInput.value.trim(), resume: resumeInput.checked });
             dialog.close();
             location.hash = `#/s/${name}/chat`;
           } catch (err) {
@@ -112,6 +113,7 @@ export function renderSessions(root) {
       h('label', {}, 'Имя (латиница, цифры, дефис)', nameInput),
       h('label', {}, 'Папка', cwdInput),
       chips,
+      h('label', { class: 'check' }, resumeInput, 'Продолжить последний разговор в этой папке'),
       error,
       h('div', { class: 'row' },
         h('button', { type: 'button', onclick: () => dialog.close() }, 'Отмена'),

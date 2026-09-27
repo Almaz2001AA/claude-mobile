@@ -61,6 +61,8 @@ dialog.sheet::backdrop { background: rgba(0, 0, 0, .6); }
 dialog.sheet form { display: flex; flex-direction: column; gap: 10px; }
 dialog.sheet h2 { margin: 0 0 4px; font-size: 18px; }
 dialog.sheet label { display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: var(--muted); }
+dialog.sheet label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
+dialog.sheet label.check input { width: auto; }
 .row { display: flex; gap: 8px; justify-content: flex-end; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { font-size: 13px; padding: 6px 10px; }
