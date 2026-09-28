@@ -4,6 +4,31 @@ Node.js server + PWA for controlling Claude Code sessions running in tmux
 (`claude-<name>`) from an iPhone. No build step — the client is vanilla ES
 modules served straight from `public/`.
 
+Веб-приложение для iPhone (PWA, без App Store и Mac), через которое можно
+продолжать те же сессии Claude Code, что открыты на компьютере: Claude
+работает на сервере внутри tmux, а ПК (по SSH) и телефон подключаются к одной
+и той же сессии.
+
+Возможности:
+
+- **Чат** — история разговора из транскрипта Claude Code: Markdown, карточки
+  инструментов, цветной diff правок, ответы на запросы разрешений кнопками,
+  загрузка файлов, быстрые команды.
+- **Терминал** — полноценный `tmux attach` через xterm.js с панелью клавиш.
+- **Push-уведомления** на iPhone: «Claude закончил» и «нужно разрешение»
+  (через хуки Claude Code); не приходят, если чат и так открыт.
+- **Telegram** — копия уведомления, если вы не отреагировали за N минут.
+- **Предупреждение**, если тот же разговор параллельно ведёт другой Claude
+  вне этой tmux-сессии.
+- Сессии, избранные папки, «продолжить последний разговор», команда `cc` для
+  ПК.
+- Вход по PIN; доступ снаружи — через Tailscale (`tailscale serve`), без
+  открытых портов.
+
+Требования: Linux-сервер с Node.js ≥ 22 (для Telegram через прокси — ≥ 24.5),
+tmux, Claude Code; Tailscale на сервере и iPhone (iOS 16.4+ для push).
+Лицензия — MIT.
+
 ## Running
 
 ```sh
