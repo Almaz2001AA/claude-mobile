@@ -2,6 +2,7 @@ import { Terminal } from '/vendor/xterm.mjs';
 import { FitAddon } from '/vendor/addon-fit.mjs';
 import { h, sessionHeader } from '../ui.js';
 import { connectWs } from '../ws.js';
+import { watchOthers } from '../others.js';
 
 const KEYS = [['Esc', '\x1b'], ['Tab', '\t'], ['↑', '\x1b[A'], ['↓', '\x1b[B'], ['←', '\x1b[D'], ['→', '\x1b[C'], ['^C', '\x03'], ['⏎', '\r']];
 const FONT_KEY = 'cm-font-size';
@@ -40,7 +41,9 @@ export function renderTerminal(root, { name }) {
     keyButton('A-', () => setFont(-1)),
     keyButton('A+', () => setFont(1)));
 
-  root.append(h('div', { class: 'screen' }, sessionHeader(name, 'term'), offline, container, keybar));
+  // The banner changes the terminal's height when it appears or goes away.
+  const others = watchOthers(name, () => refit());
+  root.append(h('div', { class: 'screen' }, sessionHeader(name, 'term'), others.el, offline, container, keybar));
   term.open(container);
   fit.fit();
 
@@ -81,6 +84,7 @@ export function renderTerminal(root, { name }) {
     window.removeEventListener('resize', refit);
     window.visualViewport?.removeEventListener('resize', refit);
     clearTimeout(goneTimer);
+    others.stop();
     socket.close();
     term.dispose();
   };

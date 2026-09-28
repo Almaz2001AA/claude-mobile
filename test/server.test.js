@@ -252,6 +252,12 @@ test('hook endpoint needs the secret and a direct loopback call, then drives sta
   assert.equal((await call('GET', '/api/sessions/nohistory/history')).status, 404);
 });
 
+test('others endpoint: nothing while hooks are fresh, 400 for a bad name', async () => {
+  assert.deepEqual(await (await call('GET', '/api/sessions/hooked/others')).json(), { others: [] });
+  assert.deepEqual(await (await call('GET', '/api/sessions/nohistory/others')).json(), { others: [] });
+  assert.equal((await call('GET', '/api/sessions/Bad!/others')).status, 400);
+});
+
 test('hook endpoint accepts a unix-domain-socket peer as "direct" (no remoteAddress at all, not an IP)', async () => {
   const unixApp = createApp({
     sessions: { exists: async () => true, baseArgs: () => [] },

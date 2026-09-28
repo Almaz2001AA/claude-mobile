@@ -9,6 +9,7 @@ const { readHistory } = require('./transcript');
 const { validateName } = require('./sessions');
 const { attachTerminal } = require('./terminal');
 const { attachChat } = require('./chat-socket');
+const { findOthers } = require('./others');
 
 const COOKIE = 'cm_auth';
 const COOKIE_MAX_AGE = 30 * 24 * 3600;
@@ -18,7 +19,7 @@ const WS_PATH_RE = /^\/ws\/(term|chat)\/([a-z0-9-]{1,32})$/;
 const authCookie = (value, maxAge) => `${COOKIE}=${value}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${maxAge}`;
 
 function createApp(deps) {
-  const { sessions, input, status, auth, push, viewers, recent, quick, favorites, paths, hookSecret, publicDir, vendorFiles = {}, allowedOrigin = null, heartbeatIntervalMs = 30000 } = deps;
+  const { sessions, input, status, auth, push, viewers, recent, quick, favorites, paths, hookSecret, publicDir, vendorFiles = {}, allowedOrigin = null, heartbeatIntervalMs = 30000, procRoot = '/proc' } = deps;
   const routes = [];
   const on = (method, pattern, handler, { open = false } = {}) => routes.push({ method, pattern, handler, open });
   const isAuthed = (req) => auth.verify(parseCookies(req.headers.cookie)[COOKIE]);
@@ -117,6 +118,11 @@ function createApp(deps) {
     const before = url.searchParams.has('before') ? clampInt(url.searchParams.get('before'), 0, Number.MAX_SAFE_INTEGER, 0) : undefined;
     const limit = clampInt(url.searchParams.get('limit'), 1, 500, 200);
     sendJson(res, 200, await readHistory(st.transcriptPath, { before, limit }));
+  });
+
+  // Other Claude processes carrying on this session's conversation (see src/others.js).
+  on('GET', /^\/api\/sessions\/(?<name>[^/]+)\/others$/, async (req, res, p) => {
+    sendJson(res, 200, { others: await findOthers({ name: p.name, status, sessions, procRoot }) });
   });
 
   on('POST', /^\/api\/sessions\/(?<name>[^/]+)\/input$/, async (req, res, p) => {

@@ -33,6 +33,9 @@ input, textarea { background: var(--panel); border: 1px solid #3a3835; border-ra
 .tabs { display: flex; background: var(--panel); border-radius: 10px; padding: 2px; }
 .tabs a { padding: 6px 10px; border-radius: 8px; font-size: 14px; color: var(--muted); }
 .tabs a.active { background: var(--panel-2); color: var(--text); }
+.others-warning { background: #3a2f16; color: #f1d58a; border-bottom: 1px solid var(--warn); font-size: 13px; line-height: 1.35; padding: 6px 12px; cursor: pointer; }
+.others-more { text-decoration: underline; white-space: nowrap; }
+.others-hint { margin-top: 4px; color: #e6d3a3; }
 .offline { background: var(--warn); color: #000; text-align: center; font-size: 14px; padding: 4px; }
 .empty, .hint { color: var(--muted); text-align: center; padding: 24px 16px; }
 .error { color: var(--danger); min-height: 1.4em; }

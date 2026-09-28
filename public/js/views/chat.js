@@ -5,6 +5,7 @@ import { ChatModel } from '../chat-model.js';
 import { getEndpoint } from '../push.js';
 import { renderMarkdown, diffView, outputView } from '../rich.js';
 import { lineDiff } from '../diff.js';
+import { watchOthers } from '../others.js';
 
 const STATUS_TEXT = {
   working: '● Работает…',
@@ -49,10 +50,12 @@ export function renderChat(root, { name }) {
   const quickChips = h('div', { class: 'quick-chips' });
   const textarea = h('textarea', { rows: '1', placeholder: 'Сообщение…', oninput: autoGrow });
   const fileInput = h('input', { type: 'file', hidden: true, onchange: upload });
+  const others = watchOthers(name);
 
   root.append(h('div', { class: 'screen' },
     sessionHeader(name, 'chat'),
     statusLine,
+    others.el,
     offline,
     messages,
     permissionBox,
@@ -155,7 +158,14 @@ export function renderChat(root, { name }) {
     }
   }
 
+  // With another Claude carrying on this conversation, input from here goes to a Claude
+  // that hasn't seen the latest messages: make that an explicit choice.
+  function confirmSend() {
+    return !others.get().length || confirm('Этот разговор сейчас ведёт другой Claude. Сообщение уйдёт Claude этой сессии, который не знает последних сообщений. Всё равно отправить?');
+  }
+
   async function sendText(text) {
+    if (!confirmSend()) return;
     try {
       await api('POST', `${base}/input`, { text });
     } catch (err) {
@@ -165,7 +175,7 @@ export function renderChat(root, { name }) {
 
   async function send() {
     const text = textarea.value;
-    if (!text.trim()) return;
+    if (!text.trim() || !confirmSend()) return;
     textarea.disabled = true;
     try {
       await api('POST', `${base}/input`, { text });
@@ -275,6 +285,7 @@ export function renderChat(root, { name }) {
 
   return () => {
     clearInterval(permissionTimer);
+    others.stop();
     document.removeEventListener('visibilitychange', reportVisibility);
     window.removeEventListener('pagehide', reportVisibility);
     socket.close();
