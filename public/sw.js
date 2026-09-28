@@ -1,7 +1,8 @@
-const CACHE = 'cm-shell-v1';
+const CACHE = 'cm-shell-v2';
 const SHELL = [
   '/', '/style.css', '/manifest.webmanifest', '/icon-192.png',
   '/js/app.js', '/js/api.js', '/js/ws.js', '/js/ui.js', '/js/push.js', '/js/chat-model.js',
+  '/js/markdown.js', '/js/diff.js', '/js/rich.js',
   '/js/views/login.js', '/js/views/sessions.js', '/js/views/chat.js', '/js/views/terminal.js', '/js/views/settings.js',
   '/vendor/xterm.mjs', '/vendor/addon-fit.mjs', '/vendor/xterm.css',
 ];

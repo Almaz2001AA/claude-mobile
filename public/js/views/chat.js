@@ -3,6 +3,8 @@ import { api } from '../api.js';
 import { connectWs } from '../ws.js';
 import { ChatModel } from '../chat-model.js';
 import { getEndpoint } from '../push.js';
+import { renderMarkdown, diffView, outputView } from '../rich.js';
+import { lineDiff } from '../diff.js';
 
 const STATUS_TEXT = {
   working: '● Работает…',
@@ -10,20 +12,32 @@ const STATUS_TEXT = {
   idle: '○ Свободна',
 };
 
-function toolDetails(item) {
+// Body of a tool card (also shown in the permission box): a coloured diff for edits, the
+// command for Bash, raw input otherwise, followed by the tool's output when there is one.
+function toolBody(item) {
   const input = item.input || {};
-  let text;
-  if (item.name === 'Bash') text = `$ ${input.command || ''}`;
-  else if (item.name === 'Edit') text = `--- было\n${input.old_string || ''}\n+++ стало\n${input.new_string || ''}`;
-  else if (item.name === 'Write') text = input.content || '';
-  else text = JSON.stringify(input, null, 2);
-  if (item.result) text += `\n\n${item.result.text}`;
-  return text;
+  const parts = [];
+  if (item.name === 'Edit') {
+    parts.push(diffView(lineDiff(input.old_string || '', input.new_string || ''), input.file_path));
+  } else if (item.name === 'MultiEdit' && Array.isArray(input.edits)) {
+    input.edits.forEach((e) => parts.push(diffView(lineDiff(e?.old_string || '', e?.new_string || ''), input.file_path)));
+  } else if (item.name === 'Write') {
+    parts.push(diffView(lineDiff('', input.content || ''), input.file_path));
+  } else if (item.name === 'Bash') {
+    parts.push(h('pre', {}, `$ ${input.command || ''}`));
+  } else {
+    parts.push(h('pre', {}, JSON.stringify(input, null, 2)));
+  }
+  if (item.result) parts.push(h('div', { class: `tool-output${item.result.isError ? ' error' : ''}` }, outputView(item.result.text)));
+  return h('div', { class: 'tool-body' }, parts);
 }
 
 export function renderChat(root, { name }) {
   const model = new ChatModel();
   const expanded = new Set();
+  // Assistant messages never change, and the whole list is re-rendered on every update,
+  // so their parsed Markdown is built once and the same node reused.
+  const rendered = new Map();
   let status = { status: 'idle', message: null };
   const base = `/api/sessions/${name}`;
 
@@ -60,7 +74,10 @@ export function renderChat(root, { name }) {
 
   function itemView(item) {
     if (item.kind === 'user') return h('div', { class: 'bubble user' }, item.text);
-    if (item.kind === 'assistant') return h('div', { class: 'bubble assistant' }, item.text);
+    if (item.kind === 'assistant') {
+      if (!rendered.has(item.id)) rendered.set(item.id, h('div', { class: 'bubble assistant md' }, renderMarkdown(item.text)));
+      return rendered.get(item.id);
+    }
     const open = expanded.has(item.id);
     const mark = item.result ? (item.result.isError ? ' ✗' : ' ✓') : ' …';
     return h('div', { class: 'tool' },
@@ -72,7 +89,7 @@ export function renderChat(root, { name }) {
           renderMessages();
         },
       }, `${open ? '▾' : '▸'} ${item.summary}${mark}`),
-      open ? h('pre', { class: 'tool-body' }, toolDetails(item)) : null);
+      open ? toolBody(item) : null);
   }
 
   function renderMessages(forceBottom = false) {
@@ -117,7 +134,7 @@ export function renderChat(root, { name }) {
       // unlike h(), so falsy children must be filtered out before calling it directly.
       permissionBox.replaceChildren(...[
         h('div', { class: 'permission-title' }, `⚠️ ${status.message || dialog.question}`),
-        tool ? h('pre', { class: 'tool-body' }, toolDetails({ ...tool, result: null })) : null,
+        tool ? toolBody({ ...tool, result: null }) : null,
         h('div', { class: 'permission-options' }, ...dialog.options.map((o) => h('button', {
           class: o.key === '1' ? 'primary' : '',
           onclick: () => answer(o.key),
