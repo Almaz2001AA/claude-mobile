@@ -290,11 +290,21 @@ test('hook endpoint accepts a unix-domain-socket peer as "direct" (no remoteAddr
   unixApp.close();
 });
 
-test('upload stores the raw body', async () => {
+test('upload stores the raw body; into <session folder>/uploads when the session exists', async () => {
   const res = await call('POST', '/api/sessions/web/upload?filename=shot.png', Buffer.from('PNGDATA'));
   assert.equal(res.status, 201);
   const { path: saved } = await res.json();
   assert.equal(fs.readFileSync(saved, 'utf8'), 'PNGDATA');
+  assert.equal(path.dirname(saved), path.join(dir, 'uploads'), 'no such session: shared uploads dir');
+
+  const project = fs.mkdtempSync(path.join(dir, 'project-'));
+  await sessions.create('upproj', project);
+  try {
+    const inSession = await (await call('POST', '/api/sessions/upproj/upload?filename=shot.png', Buffer.from('X'))).json();
+    assert.equal(path.dirname(inSession.path), path.join(fs.realpathSync(project), 'uploads'));
+  } finally {
+    await sessions.kill('upproj');
+  }
 });
 
 test('push subscription endpoints', async () => {

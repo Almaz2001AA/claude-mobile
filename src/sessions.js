@@ -97,6 +97,17 @@ class SessionManager {
     await this.tmux(['kill-session', '-t', this.sessionTarget(name)]);
   }
 
+  // The folder the session was started in (tmux's session_path), or null if unknown.
+  async cwd(name) {
+    try {
+      const out = (await this.tmux(['display-message', '-p', '-t', this.target(name), '#{session_path}'])).trim();
+      return path.isAbsolute(out) ? out : null;
+    } catch (err) {
+      if (err instanceof UserError) throw err;
+      return null;
+    }
+  }
+
   capture(name) {
     return this.tmux(['capture-pane', '-p', '-t', this.target(name)]);
   }

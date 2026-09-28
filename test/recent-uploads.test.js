@@ -16,17 +16,31 @@ test('Recent keeps unique folders, newest first, capped and persisted', () => {
   assert.deepEqual(new Recent(file, 3).list(), ['/d', '/c', '/a']);
 });
 
-test('saveUpload writes the body with a safe name and extension', async () => {
+const now = new Date(2026, 8, 28, 10, 41, 7);
+
+test('saveUpload keeps a readable name: date, time, original name, lowercase extension', async () => {
   const dir = tmpDir();
-  const file = await saveUpload(Readable.from([Buffer.from('hello')]), dir, { filename: 'Photo 1.JPG' });
-  assert.equal(path.dirname(file), dir);
-  assert.match(path.basename(file), /^\d{4}-\d{2}-\d{2}-[0-9a-f]{12}\.jpg$/);
+  const file = await saveUpload(Readable.from([Buffer.from('hello')]), dir, { filename: 'Фото 1.JPG', now });
+  assert.equal(file, path.join(dir, '2026-09-28_10-41-07-Фото_1.jpg'));
   assert.equal(fs.readFileSync(file, 'utf8'), 'hello');
 });
 
-test('saveUpload falls back to .bin for odd extensions', async () => {
-  const file = await saveUpload(Readable.from([Buffer.from('x')]), tmpDir(), { filename: '../../etc/passwd;rm' });
-  assert.match(file, /\.bin$/);
+test('saveUpload never overwrites: the same name twice gets a random suffix', async () => {
+  const dir = tmpDir();
+  const a = await saveUpload(Readable.from([Buffer.from('1')]), dir, { filename: 'image.jpg', now });
+  const b = await saveUpload(Readable.from([Buffer.from('2')]), dir, { filename: 'image.jpg', now });
+  assert.equal(path.basename(a), '2026-09-28_10-41-07-image.jpg');
+  assert.match(path.basename(b), /^2026-09-28_10-41-07-image-[0-9a-f]{6}\.jpg$/);
+  assert.equal(fs.readFileSync(a, 'utf8'), '1');
+});
+
+test('saveUpload strips path parts and odd characters; .bin for odd extensions', async () => {
+  const dir = tmpDir();
+  const file = await saveUpload(Readable.from([Buffer.from('x')]), dir, { filename: '../../etc/passwd;rm', now });
+  assert.equal(path.dirname(file), dir);
+  assert.equal(path.basename(file), '2026-09-28_10-41-07-passwd_rm.bin');
+  const hidden = await saveUpload(Readable.from([Buffer.from('x')]), dir, { filename: '.bashrc', now });
+  assert.equal(path.basename(hidden), '2026-09-28_10-41-07-bashrc.bin', 'never a hidden file');
 });
 
 test('saveUpload rejects oversize and empty bodies and leaves no file', async () => {

@@ -1,4 +1,6 @@
+const fs = require('node:fs');
 const http = require('node:http');
+const path = require('node:path');
 const { WebSocketServer } = require('ws');
 const { UserError } = require('./errors');
 const { clampInt } = require('./util');
@@ -149,7 +151,17 @@ function createApp(deps) {
 
   on('POST', /^\/api\/sessions\/(?<name>[^/]+)\/upload$/, async (req, res, p, url) => {
     validateName(p.name);
-    const file = await saveUpload(req, paths.uploads, { filename: url.searchParams.get('filename') || '' });
+    // Into <session folder>/uploads, so Claude and the user find the file next to the project;
+    // the shared uploads dir is only a fallback when the session's folder can't be used.
+    const cwd = await sessions.cwd(p.name);
+    let dir = paths.uploads;
+    if (cwd) {
+      try {
+        fs.accessSync(cwd, fs.constants.W_OK);
+        dir = path.join(cwd, 'uploads');
+      } catch {}
+    }
+    const file = await saveUpload(req, dir, { filename: url.searchParams.get('filename') || '' });
     sendJson(res, 201, { path: file });
   });
 
