@@ -117,7 +117,17 @@ tailscale --socket=~/.local/share/tailscale/tailscaled.sock \
 CLAUDE_MOBILE_ORIGIN=https://<имя-машины>.<tailnet>.ts.net
 # опционально, см. п. 2: слушать unix-сокет вместо 127.0.0.1:8787
 # CLAUDE_MOBILE_LISTEN=unix:/home/user/.local/state/claude-mobile/http.sock
+# опционально: HTTP-прокси для Telegram (если api.telegram.org напрямую недоступен)
+# CLAUDE_MOBILE_TELEGRAM_PROXY=http://127.0.0.1:7890
 ```
+
+Дублирование уведомлений в Telegram (включается и настраивается в приложении,
+«Настройки → Дублировать в Telegram»): если через 5/10/30 минут после
+«Claude закончил» / «нужно разрешение» вы не ответили Claude и не открыли чат
+сессии, то же уведомление (без текста ответа) приходит в Telegram. Бот и
+получатели берутся из настроек Telegram-канала Claude Code:
+`~/.claude/channels/telegram/.env` (`TELEGRAM_BOT_TOKEN`) и `access.json`
+(`allowFrom`).
 
 `CLAUDE_MOBILE_ORIGIN` обязателен при работе через прокси: без него сервер
 сверяет заголовок `Origin` с `Host`/`X-Forwarded-Host` запроса, а за

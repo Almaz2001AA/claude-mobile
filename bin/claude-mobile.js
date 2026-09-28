@@ -16,6 +16,7 @@ const { Recent } = require('../src/recent');
 const { QuickCommands } = require('../src/quick');
 const { Favorites } = require('../src/favorites');
 const { wireNotifications } = require('../src/notifier');
+const { TelegramNotifier } = require('../src/telegram');
 const { createApp } = require('../src/server');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -48,7 +49,8 @@ function serve() {
   const status = new StatusStore({ file: paths.links });
   const push = new PushService({ vapidFile: paths.vapid, subsFile: paths.subscriptions });
   const viewers = new Viewers();
-  wireNotifications({ status, push, viewers });
+  const telegram = new TelegramNotifier({ settingsFile: paths.telegram, viewers, origin: process.env.CLAUDE_MOBILE_ORIGIN || null });
+  wireNotifications({ status, push, viewers, telegram });
   const app = createApp({
     sessions,
     input: new InputSender({ sessions }),
@@ -63,6 +65,7 @@ function serve() {
     }),
     push,
     viewers,
+    telegram,
     recent: new Recent(paths.recent),
     quick: new QuickCommands(paths.quick),
     favorites: new Favorites(paths.favorites),

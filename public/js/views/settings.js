@@ -120,6 +120,54 @@ export function renderSettings(root) {
     }
   }
 
+  const TG_DELAYS = [[0, 'Выключено'], [5, 'Через 5 минут'], [10, 'Через 10 минут'], [30, 'Через 30 минут']];
+  const tgHint = h('p', { class: 'hint left' });
+  const tgSelect = h('select', {
+    onchange: async () => {
+      try {
+        renderTelegram(await api('PUT', '/api/telegram', { delayMinutes: Number(tgSelect.value) }));
+        toast('Сохранено');
+      } catch (err) {
+        toast(err.message);
+      }
+    },
+  }, TG_DELAYS.map(([value, label]) => h('option', { value: String(value) }, label)));
+  const tgTestBtn = h('button', {
+    class: 'wide',
+    onclick: async () => {
+      try {
+        await api('POST', '/api/telegram/test');
+        toast('Отправлено — проверьте Telegram');
+      } catch (err) {
+        toast(err.message);
+      }
+    },
+  }, 'Отправить проверочное сообщение');
+  const tgSection = h('div', { hidden: true },
+    h('h2', {}, 'Дублировать в Telegram'),
+    tgHint,
+    tgSelect,
+    tgTestBtn);
+
+  function renderTelegram(tg) {
+    tgSection.hidden = !tg.available;
+    if (!tg.available) return;
+    tgSelect.value = String(tg.delayMinutes);
+    tgSelect.disabled = !tg.configured;
+    tgTestBtn.hidden = !tg.configured;
+    tgHint.textContent = tg.configured
+      ? 'Если вы не ответили Claude и не открыли чат сессии, уведомление придёт ещё и в Telegram (без текста ответа).'
+      : 'Telegram-бот Claude Code не настроен на сервере.';
+  }
+
+  async function loadTelegram() {
+    try {
+      renderTelegram(await api('GET', '/api/telegram'));
+    } catch (err) {
+      toast(err.message);
+    }
+  }
+
   async function refreshState() {
     if (!pushSupported()) {
       state.textContent = isStandalone()
@@ -146,6 +194,7 @@ export function renderSettings(root) {
       h('label', { class: 'check' }, permissionBox, 'Нужно подтверждение'),
       enableBtn,
       disableBtn,
+      tgSection,
       h('h2', {}, 'Быстрые кнопки'),
       quickList,
       h('div', { class: 'quick-add' },
@@ -166,4 +215,5 @@ export function renderSettings(root) {
   refreshState();
   loadQuick();
   loadFavorites();
+  loadTelegram();
 }

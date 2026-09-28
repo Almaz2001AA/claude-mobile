@@ -19,7 +19,7 @@ const WS_PATH_RE = /^\/ws\/(term|chat)\/([a-z0-9-]{1,32})$/;
 const authCookie = (value, maxAge) => `${COOKIE}=${value}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${maxAge}`;
 
 function createApp(deps) {
-  const { sessions, input, status, auth, push, viewers, recent, quick, favorites, paths, hookSecret, publicDir, vendorFiles = {}, allowedOrigin = null, heartbeatIntervalMs = 30000, procRoot = '/proc' } = deps;
+  const { sessions, input, status, auth, push, viewers, recent, quick, favorites, paths, hookSecret, publicDir, vendorFiles = {}, allowedOrigin = null, heartbeatIntervalMs = 30000, procRoot = '/proc', telegram = null } = deps;
   const routes = [];
   const on = (method, pattern, handler, { open = false } = {}) => routes.push({ method, pattern, handler, open });
   const isAuthed = (req) => auth.verify(parseCookies(req.headers.cookie)[COOKIE]);
@@ -151,6 +151,23 @@ function createApp(deps) {
     validateName(p.name);
     const file = await saveUpload(req, paths.uploads, { filename: url.searchParams.get('filename') || '' });
     sendJson(res, 201, { path: file });
+  });
+
+  on('GET', /^\/api\/telegram$/, (req, res) => {
+    if (!telegram) return sendJson(res, 200, { available: false });
+    sendJson(res, 200, { available: true, configured: telegram.configured(), ...telegram.settings() });
+  });
+
+  on('PUT', /^\/api\/telegram$/, async (req, res) => {
+    if (!telegram) throw new UserError('Telegram недоступен', 404);
+    const { delayMinutes } = await readJsonBody(req);
+    sendJson(res, 200, { available: true, configured: telegram.configured(), ...telegram.setDelay(delayMinutes) });
+  });
+
+  on('POST', /^\/api\/telegram\/test$/, async (req, res) => {
+    if (!telegram) throw new UserError('Telegram недоступен', 404);
+    await telegram.send('🔔 Проверка: так будут приходить напоминания из Claude Sessions');
+    ok(res);
   });
 
   on('GET', /^\/api\/push\/key$/, (req, res) => sendJson(res, 200, { key: push.publicKey }));

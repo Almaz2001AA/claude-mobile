@@ -25,9 +25,12 @@ test.before(() => {
 
 test.after(() => killTmuxServer(socket));
 
+// Without TMUX/TMUX_PANE, so the tests behave the same when run from inside tmux.
+const { TMUX, TMUX_PANE, ...outsideTmuxEnv } = process.env;
+
 function baseEnv(envExtra = {}) {
   return {
-    ...process.env,
+    ...outsideTmuxEnv,
     PATH: `${fakeBinDir}:${process.env.PATH}`,
     CLAUDE_MOBILE_HOME: home,
     CLAUDE_PROJECTS_ROOT: projectsRoot,

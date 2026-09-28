@@ -1,4 +1,4 @@
-const CACHE = 'cm-shell-v3';
+const CACHE = 'cm-shell-v4';
 const SHELL = [
   '/', '/style.css', '/manifest.webmanifest', '/icon-192.png',
   '/js/app.js', '/js/api.js', '/js/ws.js', '/js/ui.js', '/js/push.js', '/js/chat-model.js',

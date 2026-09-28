@@ -252,6 +252,11 @@ test('hook endpoint needs the secret and a direct loopback call, then drives sta
   assert.equal((await call('GET', '/api/sessions/nohistory/history')).status, 404);
 });
 
+test('telegram endpoints report unavailable when no notifier is wired', async () => {
+  assert.deepEqual(await (await call('GET', '/api/telegram')).json(), { available: false });
+  assert.equal((await call('PUT', '/api/telegram', { delayMinutes: 5 })).status, 404);
+});
+
 test('others endpoint: nothing while hooks are fresh, 400 for a bad name', async () => {
   assert.deepEqual(await (await call('GET', '/api/sessions/hooked/others')).json(), { others: [] });
   assert.deepEqual(await (await call('GET', '/api/sessions/nohistory/others')).json(), { others: [] });
